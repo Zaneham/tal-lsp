@@ -2,7 +2,7 @@
   "name": "tal-lsp",
   "displayName": "TAL for NonStop",
   "description": "Language Server Protocol support for TAL (Transaction Application Language) - the language powering every stock exchange you've never thought about and every ATM withdrawal you've taken for granted",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": "Zane Hambly",
   "license": "Apache-2.0",
   "publisher": "ZaneHambly",
