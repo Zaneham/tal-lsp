@@ -1,0 +1,6 @@
+*.o
+*.exe
+*.vsix
+vscode/node_modules/
+vscode/out/
+vscode/bin/

@@ -1,0 +1,91 @@
+{
+  "name": "tal-lsp",
+  "displayName": "TAL for NonStop",
+  "description": "Language Server Protocol support for TAL (Transaction Application Language) - the language powering every stock exchange you've never thought about and every ATM withdrawal you've taken for granted",
+  "version": "0.2.0",
+  "author": "Zane Hambly",
+  "license": "Apache-2.0",
+  "publisher": "ZaneHambly",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Zaneham/tal-lsp"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "keywords": [
+    "tal",
+    "tandem",
+    "nonstop",
+    "hp",
+    "transaction",
+    "mainframe",
+    "legacy"
+  ],
+  "activationEvents": [
+    "onLanguage:tal"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "tal",
+        "aliases": [
+          "TAL",
+          "Transaction Application Language",
+          "tal"
+        ],
+        "extensions": [
+          ".tal",
+          ".TAL"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "tal",
+        "scopeName": "source.tal",
+        "path": "./syntaxes/tal.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "TAL",
+      "properties": {
+        "tal.serverPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to tal-lspd binary (leave empty to use bundled)"
+        },
+        "tal.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Traces communication between VS Code and the TAL language server"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^8.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "@types/vscode": "^1.75.0",
+    "typescript": "^5.0.0"
+  }
+}

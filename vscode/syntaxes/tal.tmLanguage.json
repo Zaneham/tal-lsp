@@ -1,0 +1,164 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "TAL",
+  "scopeName": "source.tal",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#directives" },
+    { "include": "#numbers" },
+    { "include": "#stdfunctions" },
+    { "include": "#keywords-control" },
+    { "include": "#keywords-declaration" },
+    { "include": "#keywords-type" },
+    { "include": "#keywords-operator" },
+    { "include": "#keywords-storage" },
+    { "include": "#operators" },
+    { "include": "#identifiers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.bang.tal",
+          "match": "!.*$"
+        },
+        {
+          "name": "comment.line.double-dash.tal",
+          "match": "--.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.tal",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.tal",
+              "match": "\"\""
+            }
+          ]
+        }
+      ]
+    },
+    "directives": {
+      "patterns": [
+        {
+          "name": "meta.preprocessor.tal",
+          "match": "^\\s*\\?.*$"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.tal",
+          "match": "\\b\\d+\\.\\d+([EeDd][+-]?\\d+)?\\b"
+        },
+        {
+          "name": "constant.numeric.hex.tal",
+          "match": "%[Hh][0-9A-Fa-f]+"
+        },
+        {
+          "name": "constant.numeric.binary.tal",
+          "match": "%[Bb][01]+"
+        },
+        {
+          "name": "constant.numeric.octal.tal",
+          "match": "%[0-7]+"
+        },
+        {
+          "name": "constant.numeric.decimal.tal",
+          "match": "\\b\\d+\\b"
+        }
+      ]
+    },
+    "stdfunctions": {
+      "patterns": [
+        {
+          "name": "support.function.builtin.tal",
+          "match": "(?i)\\$[A-Za-z_][A-Za-z0-9_]*"
+        }
+      ]
+    },
+    "keywords-control": {
+      "patterns": [
+        {
+          "name": "keyword.control.tal",
+          "match": "(?i)\\b(IF|THEN|ELSE|WHILE|DO|FOR|TO|DOWNTO|BY|UNTIL|CASE|OF|OTHERWISE|BEGIN|END|CALL|RETURN|GOTO|ASSERT|MOVE|SCAN|RSCAN)\\b"
+        }
+      ]
+    },
+    "keywords-declaration": {
+      "patterns": [
+        {
+          "name": "keyword.declaration.tal",
+          "match": "(?i)\\b(PROC|SUBPROC|FORWARD|EXTERNAL|MAIN|ENTRY|LITERAL|DEFINE|STRUCT|NAME|BLOCK|FILLER|BIT_FILLER)\\b"
+        }
+      ]
+    },
+    "keywords-type": {
+      "patterns": [
+        {
+          "name": "storage.type.tal",
+          "match": "(?i)\\b(STRING|INT|REAL|FIXED|UNSIGNED)\\b"
+        },
+        {
+          "name": "storage.type.tal",
+          "match": "(?i)\\bINT\\s*\\(\\s*32\\s*\\)"
+        },
+        {
+          "name": "storage.type.tal",
+          "match": "(?i)\\bREAL\\s*\\(\\s*64\\s*\\)"
+        }
+      ]
+    },
+    "keywords-operator": {
+      "patterns": [
+        {
+          "name": "keyword.operator.logical.tal",
+          "match": "(?i)\\b(AND|OR|NOT|LAND|LOR|XOR)\\b"
+        }
+      ]
+    },
+    "keywords-storage": {
+      "patterns": [
+        {
+          "name": "storage.modifier.tal",
+          "match": "(?i)\\b(GLOBAL|LOCAL|SUBLOCAL|CALLABLE|PRIV|VARIABLE|EXTENSIBLE|RESIDENT|INTERRUPT|READONLY|CODE|STORE|USE|DROP|STACK)\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.assignment.tal",
+          "match": ":="
+        },
+        {
+          "name": "keyword.operator.comparison.tal",
+          "match": "<>|<=|>=|<<|>>"
+        },
+        {
+          "name": "keyword.operator.unsigned.tal",
+          "match": "\\([+\\-*/]\\)"
+        },
+        {
+          "name": "keyword.operator.tal",
+          "match": "[+\\-*/<>=@&]"
+        }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        {
+          "name": "variable.other.tal",
+          "match": "\\b[A-Za-z_^][A-Za-z0-9_^]*\\b"
+        }
+      ]
+    }
+  }
+}
