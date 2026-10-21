@@ -1,8 +1,8 @@
 {
   "name": "tal-lsp",
-  "displayName": "TAL for NonStop",
-  "description": "Language Server Protocol support for TAL (Transaction Application Language) - the language powering every stock exchange you've never thought about and every ATM withdrawal you've taken for granted",
-  "version": "0.2.1",
+  "displayName": "TAL and TACL for NonStop",
+  "description": "Language server for TAL, pTAL and TACL on HPE NonStop. Autocomplete, hover, go to definition and diagnostics for the languages that have been quietly moving your money since 1974.",
+  "version": "0.3.0",
   "author": "Zane Hambly",
   "license": "Apache-2.0",
   "publisher": "ZaneHambly",
@@ -19,15 +19,19 @@
   ],
   "keywords": [
     "tal",
+    "ptal",
+    "tacl",
     "tandem",
     "nonstop",
-    "hp",
+    "hpe",
+    "guardian",
     "transaction",
-    "mainframe",
     "legacy"
   ],
   "activationEvents": [
-    "onLanguage:tal"
+    "onLanguage:tal",
+    "onLanguage:ptal",
+    "onLanguage:tacl"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -36,14 +40,45 @@
         "id": "tal",
         "aliases": [
           "TAL",
-          "Transaction Application Language",
-          "tal"
+          "Transaction Application Language"
         ],
         "extensions": [
           ".tal",
           ".TAL"
         ],
+        "firstLine": "^\\s*(?:\\?\\s*(?:[Ss][Oo][Uu][Rr][Cc][Ee]|[Nn][Oo][Ll][Ii][Ss][Tt]|[Ll][Ii][Ss][Tt]|[Pp][Aa][Gg][Ee]|[Ii][Nn][Ss][Pp][Ee][Cc][Tt]|[Nn][Oo][Ii][Nn][Ss][Pp][Ee][Cc][Tt]|[Ss][Yy][Mm][Bb][Oo][Ll][Ss]|[Nn][Oo][Ss][Yy][Mm][Bb][Oo][Ll][Ss]|[Cc][Hh][Ee][Cc][Kk]|[Hh][Ee][Aa][Pp]|[Nn][Oo][Cc][Oo][Dd][Ee]|[Cc][Oo][Dd][Ee]|[Cc][Rr][Oo][Ss][Ss][Rr][Ee][Ff]|[Ss][Ee][Aa][Rr][Cc][Hh]|[Ll][Ii][Bb][Rr][Aa][Rr][Yy]|[Ee][Rr][Rr][Oo][Rr][Ss]|[Ww][Aa][Rr][Nn]|[Nn][Oo][Ww][Aa][Rr][Nn]|[Tt][Aa][Rr][Gg][Ee][Tt]|[Ss][Aa][Vv][Ee][Aa][Bb][Ee][Nn][Dd]|[Hh][Ii][Gg][Hh][Pp][Ii][Nn]|[Hh][Ii][Gg][Hh][Rr][Ee][Qq][Uu][Ee][Ss][Tt][Ee][Rr][Ss]|[Ll][Mm][Aa][Pp]|[Mm][Aa][Pp]|[Nn][Oo][Mm][Aa][Pp]|[Oo][Pp][Tt][Ii][Mm][Ii][Zz][Ee]|[Rr][Pp]|[Ss][Ee][Tt][Tt][Oo][Gg]|[Rr][Ee][Ss][Ee][Tt][Tt][Oo][Gg]|[Ii][Ff]|[Ii][Ff][Nn][Oo][Tt]|[Ee][Nn][Dd][Ii][Ff]|[Dd][Aa][Tt][Aa][Pp][Aa][Gg][Ee][Ss]|[Ee][Xx][Tt][Ee][Nn][Dd][Ss][Tt][Aa][Cc][Kk]|[Ee][Xx][Tt][Ee][Nn][Dd][Tt][Aa][Ll][Hh][Ee][Aa][Pp]|[Ee][Nn][Vv]|[Aa][Ss][Ss][Ee][Rr][Tt][Ii][Oo][Nn]|[Aa][Bb][Oo][Rr][Tt]|[Aa][Bb][Ss][Ll][Ii][Ss][Tt]|[Bb][Ee][Gg][Ii][Nn][Cc][Oo][Mm][Pp][Ii][Ll][Aa][Tt][Ii][Oo][Nn]|[Cc][Oo][Mm][Pp][Aa][Cc][Tt]|[Dd][Ee][Ff][Ee][Xx][Pp][Aa][Nn][Dd]|[Dd][Uu][Mm][Pp][Cc][Oo][Nn][Ss]|[Ff][Ii][Xx][Uu][Pp]|[Gg][Mm][Aa][Pp]|[Ii][Cc][Oo][Dd][Ee]|[Ii][Nn][Hh][Ii][Bb][Ii][Tt][Xx][Xx]|[Ii][Nn][Nn][Ee][Rr][Ll][Ii][Ss][Tt]|[Ii][Nn][Tt]32[Ii][Nn][Dd][Ee][Xx]|[Ll][Aa][Rr][Gg][Ee][Ss][Tt][Aa][Cc][Kk]|[Nn][Oo][Nn][Ss][Tt][Oo][Pp]|[Oo][Ll][Dd][Ff][Ll][Tt][Ss][Tt][Dd][Ff][Uu][Nn][Cc]|[Pp][Ee][Pp]|[Pp][Rr][Ii][Nn][Tt][Ss][Yy][Mm]|[Rr][Ee][Ll][Oo][Cc][Aa][Tt][Ee]|[Rr][Oo][Uu][Nn][Dd]|[Rr][Uu][Nn][Nn][Aa][Mm][Ee][Dd]|[Ss][Ee][Cc][Tt][Ii][Oo][Nn]|[Ss][Qq][Ll]|[Ss][Qq][Ll][Mm][Ee][Mm]|[Ss][Tt][Aa][Cc][Kk]|[Ss][Uu][Bb][Tt][Yy][Pp][Ee]|[Ss][Uu][Pp][Pp][Rr][Ee][Ss][Ss]|[Ss][Yy][Nn][Tt][Aa][Xx]|[Uu][Ss][Ee][Gg][Ll][Oo][Bb][Aa][Ll][Ss]|[Vv][Ee][Rr][Ss][Ii][Oo][Nn])\\b|!|(?:[Nn][Aa][Mm][Ee]|[Bb][Ll][Oo][Cc][Kk]|[Pp][Rr][Oo][Cc]|[Ss][Uu][Bb][Pp][Rr][Oo][Cc]|[Ii][Nn][Tt]|[Ss][Tt][Rr][Ii][Nn][Gg]|[Ll][Ii][Tt][Ee][Rr][Aa][Ll]|[Dd][Ee][Ff][Ii][Nn][Ee]|[Ss][Tt][Rr][Uu][Cc][Tt]|[Ff][Ii][Xx][Ee][Dd]|[Rr][Ee][Aa][Ll]|[Uu][Nn][Ss][Ii][Gg][Nn][Ee][Dd]|[Ff][Oo][Rr][Ww][Aa][Rr][Dd]|[Ee][Xx][Tt][Ee][Rr][Nn][Aa][Ll])\\b)",
         "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "ptal",
+        "aliases": [
+          "pTAL",
+          "Portable TAL"
+        ],
+        "extensions": [
+          ".ptal",
+          ".PTAL"
+        ],
+        "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "tacl",
+        "aliases": [
+          "TACL",
+          "Tandem Advanced Command Language"
+        ],
+        "extensions": [
+          ".tacl",
+          ".TACL"
+        ],
+        "filenames": [
+          "TACLCSTM",
+          "TACLLOCL",
+          "taclcstm",
+          "tacllocl"
+        ],
+        "firstLine": "^\\s*\\?(?:[Tt][Aa][Cc][Ll]\\b|[Ss][Ee][Cc][Tt][Ii][Oo][Nn]\\s+\\S+\\s+(?:[Tt][Ee][Xx][Tt]|[Aa][Ll][Ii][Aa][Ss]|[Mm][Aa][Cc][Rr][Oo]|[Rr][Oo][Uu][Tt][Ii][Nn][Ee]|[Ss][Tt][Rr][Uu][Cc][Tt]|[Dd][Ii][Rr][Ee][Cc][Tt][Oo][Rr][Yy]|[Dd][Ee][Ll][Tt][Aa])\\b)",
+        "configuration": "./language-configuration-tacl.json"
       }
     ],
     "grammars": [
@@ -51,16 +86,82 @@
         "language": "tal",
         "scopeName": "source.tal",
         "path": "./syntaxes/tal.tmLanguage.json"
+      },
+      {
+        "language": "ptal",
+        "scopeName": "source.ptal",
+        "path": "./syntaxes/ptal.tmLanguage.json"
+      },
+      {
+        "language": "tacl",
+        "scopeName": "source.tacl",
+        "path": "./syntaxes/tacl.tmLanguage.json"
       }
     ],
+    "commands": [
+      {
+        "command": "tal.setTal",
+        "title": "Treat as TAL",
+        "category": "NonStop"
+      },
+      {
+        "command": "tal.setPtal",
+        "title": "Treat as pTAL",
+        "category": "NonStop"
+      },
+      {
+        "command": "tal.setTacl",
+        "title": "Treat as TACL",
+        "category": "NonStop"
+      }
+    ],
+    "submenus": [
+      {
+        "id": "tal.nonstop",
+        "label": "NonStop"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "submenu": "tal.nonstop",
+          "group": "1_modification@9"
+        }
+      ],
+      "explorer/context": [
+        {
+          "submenu": "tal.nonstop",
+          "group": "7_modification@9"
+        }
+      ],
+      "tal.nonstop": [
+        {
+          "command": "tal.setTal",
+          "group": "lang@1"
+        },
+        {
+          "command": "tal.setPtal",
+          "group": "lang@2"
+        },
+        {
+          "command": "tal.setTacl",
+          "group": "lang@3"
+        }
+      ]
+    },
     "configuration": {
       "type": "object",
-      "title": "TAL",
+      "title": "TAL and TACL",
       "properties": {
         "tal.serverPath": {
           "type": "string",
           "default": "",
-          "description": "Path to tal-lspd binary (leave empty to use bundled)"
+          "description": "Path to the tal-lspd binary. Leave empty to use the bundled one."
+        },
+        "tal.rememberAssociations": {
+          "type": "boolean",
+          "default": true,
+          "description": "When you pick Treat as TAL, pTAL or TACL from the right-click menu, record the file name in the workspace's files.associations so Guardian files without extensions keep their language next time."
         },
         "tal.trace.server": {
           "type": "string",
@@ -70,7 +171,7 @@
             "verbose"
           ],
           "default": "off",
-          "description": "Traces communication between VS Code and the TAL language server"
+          "description": "Trace the messages between VS Code and the language server."
         }
       }
     }

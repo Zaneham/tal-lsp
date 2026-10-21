@@ -11,6 +11,7 @@
  */
 
 #include "tal.h"
+#include <ctype.h>
 #include <stdio.h>
 
 /* Types now in tal.h */
@@ -177,6 +178,7 @@ static void add_kid(parse_ctx_t *P, uint32_t parent, uint32_t child)
 static uint32_t parse_expr(parse_ctx_t *P);
 static uint32_t parse_stmt(parse_ctx_t *P);
 static uint32_t parse_block(parse_ctx_t *P);
+static uint32_t postfix(parse_ctx_t *P, uint32_t nd, const tal_tok_t *t);
 
 /* ---- Expression Parser ----
  * Precedence climbing. TAL operator precedence from the
@@ -199,13 +201,16 @@ static int prec_of(uint16_t kind)
     case TK_EQ: case TK_NEQ:
     case TK_LT: case TK_GT:
     case TK_LE: case TK_GE:                  return 3;
-    case TK_LSHIFT: case TK_RSHIFT:          return 4;
+    case TK_LSHIFT: case TK_RSHIFT:
+    case TK_LSHIFT_UNSIGNED:
+    case TK_RSHIFT_UNSIGNED:                  return 4;
     case TK_PLUS: case TK_MINUS:
     case TK_PLUS_UNSIGNED:
     case TK_MINUS_UNSIGNED:                   return 5;
     case TK_STAR: case TK_SLASH:
     case TK_STAR_UNSIGNED:
-    case TK_SLASH_UNSIGNED:                   return 6;
+    case TK_SLASH_UNSIGNED:
+    case TK_MOD_UNSIGNED:                     return 6;
     default:                                  return -1;
     }
 }
@@ -268,52 +273,67 @@ static uint32_t parse_primary(parse_ctx_t *P)
         return nd;
     }
 
-    /* identifier, possibly with array subscript, struct member, or deref */
+    if (k == TK_BASE) {
+        const tal_tok_t *t = eat(P);
+        uint32_t nd = mk_node(P, PN_IDENT, (uint32_t)(t - P->toks));
+        if (at(P, TK_LBRACKET)) {
+            eat(P);
+            add_kid(P, nd, parse_expr(P));
+            expect(P, TK_RBRACKET);
+        }
+        return nd;
+    }
+
     if (k == TK_IDENT) {
         const tal_tok_t *t = eat(P);
         uint32_t nd = mk_node(P, PN_IDENT, (uint32_t)(t - P->toks));
-
-        /* postfix: array subscript */
-        if (at(P, TK_LBRACKET) || at(P, TK_LPAREN)) {
-            /* TAL uses [ ] for bit extraction, ( ) for array subscript
-             * but we use LPAREN here as TAL arrays use parens */
-            if (at(P, TK_LPAREN)) {
-                uint32_t arr = mk_node(P, PN_ARRREF, (uint32_t)(t - P->toks));
-                add_kid(P, arr, nd);
-                eat(P); /* ( */
-                add_kid(P, arr, parse_expr(P));
-                expect(P, TK_RPAREN);
-                nd = arr;
-            }
-        }
-
-        /* postfix: structure member access */
-        while (at(P, TK_DOT)) {
-            eat(P);
-            if (at(P, TK_IDENT)) {
-                const tal_tok_t *member = eat(P);
-                uint32_t dot = mk_node(P, PN_DOTREF, (uint32_t)(member - P->toks));
-                add_kid(P, dot, nd);
-                uint32_t mnd = mk_node(P, PN_IDENT, (uint32_t)(member - P->toks));
-                add_kid(P, dot, mnd);
-                nd = dot;
-            }
-        }
-
-        /* postfix: dereference */
-        if (at(P, TK_APOSTROPHE)) {
-            eat(P);
-            uint32_t deref = mk_node(P, PN_DEREF, P->nodes[nd].tok);
-            add_kid(P, deref, nd);
-            nd = deref;
-        }
-
-        return nd;
+        return postfix(P, nd, t);
     }
 
     /* fallthrough: unexpected token */
     const tal_tok_t *t = eat(P);
     return mk_node(P, PN_EMPTY, (uint32_t)(t - P->toks));
+}
+
+static uint32_t postfix(parse_ctx_t *P, uint32_t nd, const tal_tok_t *t)
+{
+    for (int n = 0; n < 32; n++) {
+        if (at(P, TK_LBRACKET)) {
+            uint32_t arr = mk_node(P, PN_ARRREF, (uint32_t)(t - P->toks));
+            add_kid(P, arr, nd);
+            eat(P);
+            add_kid(P, arr, parse_expr(P));
+            expect(P, TK_RBRACKET);
+            nd = arr;
+        } else if (at(P, TK_LPAREN)) {
+            uint32_t call = mk_node(P, PN_FUNCCALL, (uint32_t)(t - P->toks));
+            add_kid(P, call, nd);
+            eat(P);
+            for (int a = 0; a < 32 && !at(P, TK_RPAREN) && !at(P, TK_EOF); a++) {
+                if (!at(P, TK_COMMA)) add_kid(P, call, parse_expr(P));
+                if (at(P, TK_COLON)) { eat(P); (void)parse_expr(P); }
+                if (at(P, TK_COMMA)) eat(P);
+                else break;
+            }
+            expect(P, TK_RPAREN);
+            nd = call;
+        } else if (at(P, TK_DOT)) {
+            eat(P);
+            if (at(P, TK_LT)) {
+                for (int b = 0; b < 8 && !at(P, TK_GT) && !at(P, TK_EOF); b++) eat(P);
+                expect(P, TK_GT);
+            } else if (at(P, TK_IDENT)) {
+                const tal_tok_t *member = eat(P);
+                uint32_t dot = mk_node(P, PN_DOTREF, (uint32_t)(member - P->toks));
+                add_kid(P, dot, nd);
+                add_kid(P, dot, mk_node(P, PN_IDENT, (uint32_t)(member - P->toks)));
+                nd = dot;
+            }
+        } else {
+            break;
+        }
+    }
+    return nd;
 }
 
 static uint32_t parse_expr_prec(parse_ctx_t *P, int min_prec)
@@ -342,35 +362,57 @@ static uint32_t parse_expr(parse_ctx_t *P)
 
 /* ---- Statement Parser ---- */
 
-static uint32_t parse_decl(parse_ctx_t *P)
+static int isword(parse_ctx_t *P, const char *w)
 {
-    /* type keyword already peeked by caller */
-    const tal_tok_t *type_tok = eat(P);
-    uint32_t decl = mk_node(P, PN_DECL, (uint32_t)(type_tok - P->toks));
-
-    /* optional indirection: . for byte pointer, .EXT for extended */
-    if (at(P, TK_DOT)) eat(P);
-
-    /* variable name */
-    if (at(P, TK_IDENT)) {
-        const tal_tok_t *name = eat(P);
-        uint32_t name_nd = mk_node(P, PN_IDENT, (uint32_t)(name - P->toks));
-        add_kid(P, decl, name_nd);
+    if (!at(P, TK_IDENT)) return 0;
+    const char *s = tal_str(P->lex, cur(P)->off);
+    for (int i = 0; i < TAL_MAX_IDENT; i++) {
+        if (toupper((unsigned char)s[i]) != w[i]) return 0;
+        if (!w[i]) return 1;
     }
+    return 0;
+}
 
-    /* optional array bounds: name[lo:hi] using parens in TAL */
-    if (at(P, TK_LPAREN)) {
+static void skip_to(parse_ctx_t *P, uint16_t close)
+{
+    eat(P);
+    for (int n = 0; n < 256 && !at(P, close) && !at(P, TK_EOF); n++) eat(P);
+    if (at(P, close)) eat(P);
+}
+
+static void decl_one(parse_ctx_t *P, uint32_t decl)
+{
+    if (at(P, TK_DOT)) {
         eat(P);
-        while (!at(P, TK_RPAREN) && !at(P, TK_EOF)) eat(P);
-        if (at(P, TK_RPAREN)) eat(P);
+        if (isword(P, "EXT") || isword(P, "SG")) eat(P);
     }
-
-    /* optional initialisation: := value */
+    if (!at(P, TK_IDENT)) return;
+    const tal_tok_t *name = eat(P);
+    add_kid(P, decl, mk_node(P, PN_IDENT, (uint32_t)(name - P->toks)));
+    if (at(P, TK_LBRACKET)) skip_to(P, TK_RBRACKET);
+    if (at(P, TK_LPAREN)) skip_to(P, TK_RPAREN);
+    if (at(P, TK_EQ)) {
+        eat(P);
+        if (at(P, TK_BASE) || at(P, TK_IDENT)) eat(P);
+        if (at(P, TK_LBRACKET)) skip_to(P, TK_RBRACKET);
+    }
     if (at(P, TK_ASSIGN)) {
         eat(P);
-        add_kid(P, decl, parse_expr(P));
+        if (at(P, TK_LBRACKET)) skip_to(P, TK_RBRACKET);
+        else (void)parse_expr(P);
     }
+}
 
+static uint32_t parse_decl(parse_ctx_t *P)
+{
+    const tal_tok_t *type_tok = eat(P);
+    uint32_t decl = mk_node(P, PN_DECL, (uint32_t)(type_tok - P->toks));
+    if (at(P, TK_LPAREN)) skip_to(P, TK_RPAREN);
+    for (int n = 0; n < PN_MAX_KIDS; n++) {
+        decl_one(P, decl);
+        if (!at(P, TK_COMMA)) break;
+        eat(P);
+    }
     return decl;
 }
 
@@ -419,6 +461,21 @@ static uint32_t parse_for(parse_ctx_t *P)
     return nd;
 }
 
+static void case_label(parse_ctx_t *P)
+{
+    uint32_t k = P->pos;
+    for (int n = 0; n < 32 && k < P->n_toks; n++, k++) {
+        uint16_t t = P->toks[k].kind;
+        if (t == TK_SEMICOLON || t == TK_BEGIN || t == TK_END ||
+            t == TK_ASSIGN || t == TK_EOF)
+            return;
+        if (t == TK_ARROW) {
+            for (uint32_t i = P->pos; i <= k; i++) eat(P);
+            return;
+        }
+    }
+}
+
 static uint32_t parse_case(parse_ctx_t *P)
 {
     const tal_tok_t *ct = eat(P); /* CASE */
@@ -431,10 +488,12 @@ static uint32_t parse_case(parse_ctx_t *P)
     while (!at(P, TK_END) && !at(P, TK_EOF)) {
         if (at(P, TK_OTHERWISE)) {
             eat(P);
+            if (at(P, TK_ARROW)) eat(P);
             add_kid(P, nd, parse_stmt(P));
             if (at(P, TK_SEMICOLON)) eat(P);
             break;
         }
+        case_label(P);
         add_kid(P, nd, parse_stmt(P));
         if (at(P, TK_SEMICOLON)) eat(P);
     }
@@ -456,8 +515,9 @@ static uint32_t parse_call(parse_ctx_t *P)
 
     if (at(P, TK_LPAREN)) {
         eat(P);
-        while (!at(P, TK_RPAREN) && !at(P, TK_EOF)) {
-            add_kid(P, nd, parse_expr(P));
+        for (int a = 0; a < 64 && !at(P, TK_RPAREN) && !at(P, TK_EOF); a++) {
+            if (!at(P, TK_COMMA)) add_kid(P, nd, parse_expr(P));
+            if (at(P, TK_COLON)) { eat(P); (void)parse_expr(P); }
             if (at(P, TK_COMMA)) eat(P);
             else break;
         }

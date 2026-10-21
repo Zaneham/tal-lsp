@@ -1,0 +1,208 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "TACL",
+  "scopeName": "source.tacl",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#directives"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#labels"
+    },
+    {
+      "include": "#macargs"
+    },
+    {
+      "include": "#escapes"
+    },
+    {
+      "include": "#builtins"
+    },
+    {
+      "include": "#brackets"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#commands"
+    },
+    {
+      "include": "#names"
+    },
+    {
+      "include": "#operators"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-equals.tacl",
+          "match": "==.*$"
+        },
+        {
+          "name": "comment.block.braces.tacl",
+          "begin": "\\{",
+          "end": "\\}|$"
+        },
+        {
+          "name": "comment.line.command.tacl",
+          "match": "(?i)^\\s*COMMENT\\b.*$"
+        }
+      ]
+    },
+    "directives": {
+      "patterns": [
+        {
+          "name": "meta.preprocessor.tacl",
+          "match": "(?i)^\\s*\\?(TACL|SECTION|FORMAT|BLANK)\\b.*$",
+          "captures": {
+            "0": {
+              "patterns": [
+                {
+                  "name": "keyword.control.directive.tacl",
+                  "match": "(?i)\\?(TACL|SECTION|FORMAT|BLANK)\\b"
+                },
+                {
+                  "name": "storage.type.tacl",
+                  "match": "(?i)\\b(TEXT|ALIAS|MACRO|ROUTINE|STRUCT|DIRECTORY|DELTA|PLAIN|QUOTED)\\b"
+                },
+                {
+                  "name": "entity.name.function.tacl",
+                  "match": "[A-Za-z][A-Za-z0-9_^:]*"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.tacl",
+          "begin": "\"",
+          "end": "\"|$"
+        }
+      ]
+    },
+    "labels": {
+      "patterns": [
+        {
+          "name": "keyword.control.label.tacl",
+          "match": "\\|[^|\\[\\]\\n]*\\|"
+        }
+      ]
+    },
+    "macargs": {
+      "patterns": [
+        {
+          "name": "variable.parameter.tacl",
+          "match": "%[^%\\n]*%"
+        }
+      ]
+    },
+    "escapes": {
+      "patterns": [
+        {
+          "name": "constant.character.escape.tacl",
+          "match": "~(==|~|_|;|.)|%%"
+        },
+        {
+          "name": "keyword.control.continuation.tacl",
+          "match": "&\\s*$"
+        }
+      ]
+    },
+    "builtins": {
+      "patterns": [
+        {
+          "name": "support.function.builtin.tacl",
+          "match": "#[A-Za-z][A-Za-z0-9_]*"
+        }
+      ]
+    },
+    "brackets": {
+      "patterns": [
+        {
+          "name": "punctuation.section.brackets.tacl",
+          "match": "[\\[\\]]"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.tacl",
+          "match": "(?<![A-Za-z0-9_^.])[+-]?\\d+\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "storage.type.tacl",
+          "match": "(?i)\\b(BOOL|BYTE|CHAR|CRTPID|DEVICE|ENUM|FNAME|FNAME32|INT|INT2|INT4|PHANDLE|SSID|STRUCT|SUBVOL|TRANSID|TSTAMP|UINT|USERNAME|FILLER)\\b"
+        },
+        {
+          "name": "keyword.other.struct.tacl",
+          "match": "(?i)\\b(BEGIN|END|LIKE|REDEFINES|VALUE)\\b"
+        }
+      ]
+    },
+    "commands": {
+      "patterns": [
+        {
+          "name": "keyword.other.command.tacl",
+          "match": "(?i)(?<![A-Za-z0-9_^:#$])(_CONTIME_TO_TEXT|XBUSUP|YBUSUP|RECEIVEDUMP|LOADEDFILES|_COMPAREV|DETACHSEG|FILETOVAR|VARTOFILE|INLPREFIX|FILENAMES|CREATESEG|COLUMNIZE|ATTACHSEG|VARIABLES|SETPROMPT|BACKUPCPU|PASSWORD|POSTDUMP|ACTIVATE|COPYDUMP|INITTERM|FILEINFO|ALARMOFF|DEBUGGER|PMSEARCH|BUILTINS|_LONGEST|SYSTIMES|VARINFO|HISTORY|RCVDUMP|ADDUSER|VCHANGE|DELUSER|INLECHO|COMPUTE|SEMSTAT|DEFAULT|SEGINFO|VINSERT|COMMENT|VDELETE|_MONTH3|SUSPEND|COPYVAR|SETTIME|CLICVAL|ASSIGN|VOLUME|CREATE|RENAME|SWITCH|OUTVAR|IPUCOM|LOGOFF|INLEOF|DELETE|RELOAD|ALTPRI|WAKEUP|BUSCMD|SYSTEM|INLOUT|LIGHTS|STATUS|VTREE|USERS|PARAM|LOGON|CLEAR|VLIST|VMOVE|RESET|PURGE|VFIND|ALTER|VCOPY|FILES|PAUSE|DEBUG|BREAK|INLTO|SINK|HELP|EXIT|TIME|SHOW|HOME|TACL|KEYS|STOP|INFO|LOAD|KEEP|JOIN|PMSG|PUSH|PPD|USE|ADD|RUN|ENV|SET|WHO|POP|FC|O)\\b"
+        },
+        {
+          "name": "keyword.operator.word.tacl",
+          "match": "(?i)\\b(AND|OR|NOT|TO|BY)\\b"
+        }
+      ]
+    },
+    "names": {
+      "patterns": [
+        {
+          "name": "entity.name.tag.define.tacl",
+          "match": "=[A-Za-z][A-Za-z0-9_^-]*"
+        },
+        {
+          "name": "variable.other.process.tacl",
+          "match": "\\$[A-Za-z][A-Za-z0-9]*(\\.#?[A-Za-z0-9]+)*"
+        },
+        {
+          "name": "variable.other.node.tacl",
+          "match": "\\\\[A-Za-z][A-Za-z0-9]*"
+        },
+        {
+          "name": "variable.other.path.tacl",
+          "match": ":[A-Za-z_^][A-Za-z0-9_^:]*"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.string.tacl",
+          "match": "'!?(<>|<=|>=|[+=<>])'"
+        },
+        {
+          "name": "keyword.operator.tacl",
+          "match": "<>|<=|>=|[+\\-*/=<>]"
+        }
+      ]
+    }
+  }
+}

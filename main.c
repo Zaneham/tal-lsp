@@ -115,7 +115,7 @@ int main(int argc, char **argv)
     printf("\n--- Parser ---\n\n");
 
     static parse_ctx_t parse;
-    uint32_t root = tal_parse(&parse, lex.toks, lex.n_toks, &lex);
+    (void)tal_parse(&parse, lex.toks, lex.n_toks, &lex);
 
     printf("AST: %u nodes, %d diagnostics\n\n", parse.n_nodes, parse.n_diags);
 

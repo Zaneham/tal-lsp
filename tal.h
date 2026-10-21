@@ -56,10 +56,17 @@ typedef enum {
     TK_SLASH,           /* /   signed divide */
     TK_LSHIFT,          /* <<  left shift */
     TK_RSHIFT,          /* >>  right shift (arithmetic) */
-    TK_PLUS_UNSIGNED,   /* (+) unsigned add */
-    TK_MINUS_UNSIGNED,  /* (-) unsigned subtract */
-    TK_STAR_UNSIGNED,   /* (*) unsigned multiply */
-    TK_SLASH_UNSIGNED,  /* (/) unsigned divide */
+    TK_PLUS_UNSIGNED,   /* '+' unsigned add */
+    TK_MINUS_UNSIGNED,  /* '-' unsigned subtract */
+    TK_STAR_UNSIGNED,   /* '*' unsigned multiply */
+    TK_SLASH_UNSIGNED,  /* '/' unsigned divide */
+    TK_MOD_UNSIGNED,    /* '\\' unsigned modulo */
+    TK_LSHIFT_UNSIGNED, /* '<<' unsigned left shift */
+    TK_RSHIFT_UNSIGNED, /* '>>' unsigned right shift */
+    TK_MOVE_LR,         /* ':=' left-to-right move */
+    TK_MOVE_RL,         /* '=:' right-to-left move */
+    TK_BASE,            /* 'G' 'L' 'S' 'P' base address symbols */
+    TK_ARROW,           /* -> */
 
     /* Bitwise logical operators */
     TK_LAND,            /* LAND */
@@ -93,7 +100,6 @@ typedef enum {
     TK_DOT,             /* structure member access */
     TK_AMPERSAND,       /* & concatenation in MOVE */
     TK_AT,              /* @ address-of */
-    TK_APOSTROPHE,      /* ' dereference */
     TK_CARET,           /* ^ used in extended pointers */
     TK_EQUALS,          /* = in LITERAL/DEFINE context */
 
@@ -137,6 +143,8 @@ typedef enum {
     TK_EXTENSIBLE,
     TK_LANGUAGE,
     TK_ENTRY,
+    TK_LABEL,
+    TK_PTAL,            /* reserved only in pTAL: BADDR, WADDR, PROCADDR ... */
 
     /* Statement keywords (Chapter 12: Statements) */
     TK_IF,
@@ -183,9 +191,6 @@ typedef enum {
     /* Hardware indicators */
     TK_DOLLAR_CARRY,    /* $CARRY */
     TK_DOLLAR_OVERFLOW, /* $OVERFLOW */
-
-    /* Read-only array */
-    TK_READONLY,        /* 'P' prefix for read-only arrays */
 
     /* Sentinel */
     TK_COMMENT,         /* retained for LSP hover/highlight */
@@ -380,5 +385,28 @@ void tal_sema_refs(tal_symtab_t *S, const tal_lex_t *L);
 
 /* Get DEFINE body text (returns "" if no body) */
 const char *tal_define_body(const tal_sym_t *sym, const tal_lex_t *L);
+
+/* ---- Guardian procedures and standard functions ---- */
+
+typedef struct {
+    const char *name;
+    const char *summary;
+    const char *syntax;
+    uint8_t     superseded;
+} gp_ent_t;
+
+typedef struct {
+    const char *name;
+    const char *desc;
+    const char *syntax;
+} sf_ent_t;
+
+extern const gp_ent_t gp_tab[];
+extern const uint32_t gp_n;
+extern const sf_ent_t sf_tab[];
+extern const uint32_t sf_n;
+
+const gp_ent_t *gp_find(const char *s, uint32_t len);
+const sf_ent_t *sf_find(const char *s, uint32_t len);
 
 #endif /* TAL_H */

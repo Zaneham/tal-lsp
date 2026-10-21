@@ -14,6 +14,7 @@
 #define TAL_LSP_H
 
 #include "tal.h"
+#include "tacl.h"
 
 /* ---- Limits ----
  * 512KB per message because TAL files on NonStop are
@@ -22,7 +23,7 @@
  * than buffer limits. */
 
 #define LSP_MSG_MAX     (512 * 1024)
-#define LSP_OUT_MAX     (64 * 1024)
+#define LSP_OUT_MAX     (256 * 1024)
 #define LSP_MAX_DOCS    32
 #define LSP_MAX_URI     512
 #define LSP_MAX_METHOD  128
@@ -107,12 +108,15 @@ void lsp_write_msg(const char *json, uint32_t len);
  * tal_lex_t alone is ~1MB, so one-per-document would get
  * expensive fast and we're single-threaded anyway. */
 
+typedef enum { LANG_TAL, LANG_PTAL, LANG_TACL } lsp_lang_t;
+
 typedef struct {
     char     uri[LSP_MAX_URI];
     char    *src;
     uint32_t src_len;
     int      version;
     int      is_open;
+    uint8_t  lang;
 } lsp_doc_t;
 
 typedef struct {
@@ -121,10 +125,12 @@ typedef struct {
     tal_lex_t   *lex;
     parse_ctx_t *prs;
     tal_symtab_t *sym;
+    const lsp_doc_t *cur;
 } lsp_store_t;
 
 lsp_doc_t *doc_open(lsp_store_t *S, const char *uri,
-                    const char *text, uint32_t len, int version);
+                    const char *text, uint32_t len, int version,
+                    uint8_t lang);
 lsp_doc_t *doc_find(lsp_store_t *S, const char *uri);
 void       doc_update(lsp_doc_t *doc, const char *text,
                       uint32_t len, int version);

@@ -146,28 +146,27 @@ static void walk_decl(sema_ctx_t *C, uint32_t ni)
     if (n->tok < C->parse->n_toks)
         type = type_from_tok(C->parse->toks[n->tok].kind);
 
-    if (n->n_kids > 0) {
-        const pn_node_t *name_nd = &C->parse->nodes[n->kids[0]];
-        if (name_nd->kind == PN_IDENT) {
-            const char *name = tok_text(C, name_nd->tok);
+    for (int i = 0; i < n->n_kids; i++) {
+        const pn_node_t *name_nd = &C->parse->nodes[n->kids[i]];
+        if (name_nd->kind != PN_IDENT) continue;
+        const char *name = tok_text(C, name_nd->tok);
 
-            /* TAL declares parameters in the PROC header without
-             * types, then redeclares them with types on the next
-             * lines. If we already have a param with this name in
-             * the current scope, merge the type info instead of
-             * creating a duplicate symbol. This is why hover for
-             * a parameter actually shows its type. */
-            tal_sym_t *existing = sym_find_mut(C, name);
-            if (existing && existing->kind == TS_PARAM &&
-                existing->scope == C->syms->scope_depth &&
-                existing->type == TT_NONE) {
-                existing->type = type;
-                return;
-            }
-
-            sym_add(C, name, TS_VAR, type,
-                    &C->parse->toks[name_nd->tok], name_nd->tok);
+        /* TAL declares parameters in the PROC header without
+         * types, then redeclares them with types on the next
+         * lines. If we already have a param with this name in
+         * the current scope, merge the type info instead of
+         * creating a duplicate symbol. This is why hover for
+         * a parameter actually shows its type. */
+        tal_sym_t *existing = sym_find_mut(C, name);
+        if (existing && existing->kind == TS_PARAM &&
+            existing->scope == C->syms->scope_depth &&
+            existing->type == TT_NONE) {
+            existing->type = type;
+            continue;
         }
+
+        sym_add(C, name, TS_VAR, type,
+                &C->parse->toks[name_nd->tok], name_nd->tok);
     }
 }
 

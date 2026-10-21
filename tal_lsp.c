@@ -198,7 +198,8 @@ lsp_doc_t *doc_find(lsp_store_t *S, const char *uri)
 }
 
 lsp_doc_t *doc_open(lsp_store_t *S, const char *uri,
-                    const char *text, uint32_t len, int version)
+                    const char *text, uint32_t len, int version,
+                    uint8_t lang)
 {
     /* reclaim closed slots before growing */
     lsp_doc_t *doc = NULL;
@@ -222,8 +223,9 @@ lsp_doc_t *doc_open(lsp_store_t *S, const char *uri,
     doc->src_len = len;
     doc->version = version;
     doc->is_open = 1;
+    doc->lang = lang;
 
-    lsp_log("opened: %s (%u bytes, v%d)", uri, len, version);
+    lsp_log("opened: %s (%u bytes, v%d, lang %u)", uri, len, version, lang);
     return doc;
 }
 
@@ -250,6 +252,7 @@ void doc_close(lsp_store_t *S, const char *uri)
         doc->src = NULL;
         doc->src_len = 0;
         doc->is_open = 0;
+        if (S->cur == doc) S->cur = NULL;
         lsp_log("closed: %s", uri);
     }
 }
@@ -273,12 +276,12 @@ void doc_close(lsp_store_t *S, const char *uri)
  * matching the rest of 2020s tooling).
  * ================================================================ */
 
-static void publish_diagnostics_3(const char *uri,
+static void publish_diagnostics_3(const char *uri, const char *src,
                                   const tal_diag_t *d1, int n1,
                                   const tal_diag_t *d2, int n2,
                                   const tal_diag_t *d3, int n3);
 
-static void emit_diag(jw_buf_t *w, const tal_diag_t *d)
+static void emit_diag(jw_buf_t *w, const tal_diag_t *d, const char *src)
 {
     uint32_t line = d->line > 0 ? d->line - 1 : 0;
     uint32_t col  = d->col  > 0 ? d->col  - 1 : 0;
@@ -299,12 +302,12 @@ static void emit_diag(jw_buf_t *w, const tal_diag_t *d)
       jw_obj_close(w);
     jw_obj_close(w);
     jw_key(w, "severity"); jw_int(w, d->severity);
-    jw_key(w, "source");   jw_str(w, "tal");
+    jw_key(w, "source");   jw_str(w, src);
     jw_key(w, "message");  jw_str(w, d->msg);
     jw_obj_close(w);
 }
 
-static void publish_diagnostics_3(const char *uri,
+static void publish_diagnostics_3(const char *uri, const char *src,
                                   const tal_diag_t *d1, int n1,
                                   const tal_diag_t *d2, int n2,
                                   const tal_diag_t *d3, int n3)
@@ -316,9 +319,9 @@ static void publish_diagnostics_3(const char *uri,
     jw_key(&w, "diagnostics");
     jw_arr_open(&w);
 
-    for (int i = 0; i < n1; i++) emit_diag(&w, &d1[i]);
-    for (int i = 0; i < n2; i++) emit_diag(&w, &d2[i]);
-    for (int i = 0; i < n3; i++) emit_diag(&w, &d3[i]);
+    for (int i = 0; i < n1; i++) emit_diag(&w, &d1[i], src);
+    for (int i = 0; i < n2; i++) emit_diag(&w, &d2[i], src);
+    for (int i = 0; i < n3; i++) emit_diag(&w, &d3[i], src);
 
     jw_arr_close(&w);
     jw_obj_close(&w);
@@ -340,9 +343,47 @@ static int should_warn_unused(const tal_sym_t *s)
     return 0;
 }
 
+static const char *lang_src(uint8_t lang)
+{
+    return lang == LANG_TACL ? "tacl" : lang == LANG_PTAL ? "ptal" : "tal";
+}
+
+static void dialect(lsp_store_t *S, uint8_t lang, tal_diag_t *out, int *n)
+{
+    const tal_lex_t *L = S->lex;
+    for (uint32_t i = 0; i < L->n_toks && *n < TAL_MAX_DIAGS; i++) {
+        const tal_tok_t *t = &L->toks[i];
+        uint16_t k = t->kind;
+        int old = k == TK_CODE || k == TK_STACK || k == TK_STORE || k == TK_USE || k == TK_DROP;
+        if (!(lang == LANG_PTAL && old) && !(lang == LANG_TAL && k == TK_PTAL)) continue;
+        tal_diag_t *d = &out[(*n)++];
+        d->line = t->line;
+        d->col = t->col;
+        d->len = t->len;
+        d->severity = 3;
+        if (old)
+            snprintf(d->msg, sizeof d->msg, "%s is not available in pTAL", tal_str(L, t->off));
+        else
+            snprintf(d->msg, sizeof d->msg, "%s is a pTAL keyword, not TAL", tal_str(L, t->off));
+    }
+}
+
+static void tacl_analyze(lsp_store_t *S, lsp_doc_t *doc)
+{
+    tc_lex(S->lex, doc->src, doc->src_len);
+    memset(S->prs, 0, sizeof(*S->prs));
+    tc_pass(S->sym, S->lex, S->prs->diags, &S->prs->n_diags);
+    publish_diagnostics_3(doc->uri, "tacl",
+                          S->lex->diags, S->lex->n_diags,
+                          S->prs->diags, S->prs->n_diags,
+                          NULL, 0);
+}
+
 static void doc_analyze(lsp_store_t *S, lsp_doc_t *doc)
 {
     if (!doc || !doc->src) return;
+    S->cur = doc;
+    if (doc->lang == LANG_TACL) { tacl_analyze(S, doc); return; }
 
     memset(S->lex, 0, sizeof(*S->lex));
     tal_lex(S->lex, doc->src, doc->src_len);
@@ -374,11 +415,46 @@ static void doc_analyze(lsp_store_t *S, lsp_doc_t *doc)
         }
     }
 
+    dialect(S, doc->lang, unused_diags, &n_unused);
+
     /* publish all diagnostics in one go */
-    publish_diagnostics_3(doc->uri,
+    publish_diagnostics_3(doc->uri, lang_src(doc->lang),
                           S->lex->diags, S->lex->n_diags,
                           S->prs->diags, S->prs->n_diags,
                           unused_diags, n_unused);
+}
+
+static const lsp_doc_t *ensure(lsp_server_t *srv, const jv_doc_t *msg)
+{
+    char uri[LSP_MAX_URI];
+    if (jv_get_str(msg, "params.textDocument.uri", uri, sizeof uri) < 0) return NULL;
+    lsp_doc_t *doc = doc_find(&srv->store, uri);
+    if (!doc) return NULL;
+    if (srv->store.cur != doc) doc_analyze(&srv->store, doc);
+    return doc;
+}
+
+static const tal_tok_t *tok_at(const tal_lex_t *L, uint32_t line, uint32_t col)
+{
+    for (uint32_t i = 0; i < L->n_toks; i++) {
+        const tal_tok_t *t = &L->toks[i];
+        if (t->line == line && col >= t->col && col < t->col + t->len) return t;
+    }
+    return NULL;
+}
+
+static const tal_sym_t *tc_symat(const lsp_store_t *S, const tal_tok_t *t)
+{
+    if (!t || t->kind != TC_WORD) return NULL;
+    const char *s = tal_str(S->lex, t->off);
+    uint32_t n = 0;
+    if (t->len && s[0] == ':') n = t->len;
+    else while (n < t->len && s[n] != '.' && s[n] != ':' && s[n] != '(') n++;
+    if (n == 0 || n >= TAL_MAX_IDENT) return NULL;
+    char name[TAL_MAX_IDENT];
+    memcpy(name, s, n);
+    name[n] = '\0';
+    return tal_sym_lookup(S->sym, name);
 }
 
 /* ================================================================
@@ -417,6 +493,9 @@ static void handle_initialize(lsp_server_t *srv, int64_t id,
           jw_key(&w, "triggerCharacters");
           jw_arr_open(&w);
             jw_str(&w, "$");
+            jw_str(&w, "#");
+            jw_str(&w, "|");
+            jw_str(&w, "?");
           jw_arr_close(&w);
         jw_obj_close(&w);
 
@@ -433,7 +512,7 @@ static void handle_initialize(lsp_server_t *srv, int64_t id,
       jw_key(&w, "serverInfo");
       jw_obj_open(&w);
         jw_key(&w, "name");    jw_str(&w, "tal-lsp");
-        jw_key(&w, "version"); jw_str(&w, "0.2.0");
+        jw_key(&w, "version"); jw_str(&w, "0.3.0");
       jw_obj_close(&w);
     jw_obj_close(&w);
 
@@ -489,7 +568,12 @@ static void handle_did_open(lsp_server_t *srv, const jv_doc_t *msg)
 
     int version = (int)jv_get_int(msg, "params.textDocument.version");
 
-    lsp_doc_t *doc = doc_open(&srv->store, uri, text, text_len, version);
+    char lid[32] = "tal";
+    jv_get_str(msg, "params.textDocument.languageId", lid, sizeof lid);
+    uint8_t lang = strcmp(lid, "tacl") == 0 ? LANG_TACL
+                 : strcmp(lid, "ptal") == 0 ? LANG_PTAL : LANG_TAL;
+
+    lsp_doc_t *doc = doc_open(&srv->store, uri, text, text_len, version, lang);
     free(text);
 
     if (doc) doc_analyze(&srv->store, doc);
@@ -668,44 +752,111 @@ static const char *kind_name(uint8_t kind)
     }
 }
 
+static const char *ptal_words[] = {
+    "BADDR", "WADDR", "EXTADDR", "CBADDR", "CWADDR", "SGBADDR", "SGWADDR",
+    "SGXBADDR", "SGXWADDR", "PROCADDR", "PROCPTR", "REFALIGNED",
+    "FIELDALIGN", "VOLATILE", "LABEL", NULL
+};
+
+static const char *tacl_labels[] = {
+    "|THEN|", "|ELSE|", "|OTHERWISE|", "|BODY|", "|WHILE|", "|DO|", "|UNTIL|", NULL
+};
+
+static const char *tacl_direct[] = { "?TACL", "?SECTION", "?FORMAT", "?BLANK", NULL };
+
+static const char *tacl_types[] = {
+    "TEXT", "ALIAS", "MACRO", "ROUTINE", "STRUCT", "DIRECTORY", "DELTA", NULL
+};
+
+static void item(jw_buf_t *w, const char *label, int kind, const char *detail)
+{
+    jw_obj_open(w);
+    jw_key(w, "label"); jw_str(w, label);
+    jw_key(w, "kind");  jw_int(w, kind);
+    if (detail && detail[0]) { jw_key(w, "detail"); jw_str(w, detail); }
+    jw_obj_close(w);
+}
+
+static void items(jw_buf_t *w, const char *const *list, int kind)
+{
+    for (int i = 0; i < 256 && list[i]; i++) item(w, list[i], kind, NULL);
+}
+
+static void itemsn(jw_buf_t *w, const char *const *list, uint32_t n, int kind)
+{
+    for (uint32_t i = 0; i < n; i++) item(w, list[i], kind, NULL);
+}
+
+static int tc_ckind(uint8_t kind)
+{
+    switch (kind) {
+    case TC_S_MACRO: case TC_S_ROUTINE: return CIK_FUNCTION;
+    case TC_S_STRUCT:                   return CIK_STRUCT;
+    case TC_S_ITEM:                     return CIK_FIELD;
+    case TC_S_DIRECTORY:                return CIK_MODULE;
+    case TC_S_ALIAS:                    return CIK_REFERENCE;
+    default:                            return CIK_VARIABLE;
+    }
+}
+
+static void tacl_items(jw_buf_t *w, const lsp_store_t *S, tc_ctx_t c)
+{
+    if (c == TC_C_LABEL)   { items(w, tacl_labels, CIK_KEYWORD); return; }
+    if (c == TC_C_DIRECT)  { items(w, tacl_direct, CIK_KEYWORD); return; }
+    if (c == TC_C_SECTYPE) { items(w, tacl_types, CIK_KEYWORD); return; }
+    if (c == TC_C_ARGTYPE) { itemsn(w, tc_argtab, tc_narg, CIK_ENUMMEMBER); return; }
+    for (uint32_t i = 0; i < tc_nbl; i++)
+        item(w, tc_bltab[i].name,
+             tc_bltab[i].kind == TC_K_VAR ? CIK_VARIABLE : CIK_FUNCTION,
+             tc_bltab[i].desc);
+    if (c == TC_C_BUILTIN) return;
+    for (uint32_t i = 0; i < tc_ncm; i++)
+        item(w, tc_cmtab[i].name,
+             tc_cmtab[i].kind == TC_K_CMD ? CIK_FUNCTION : CIK_MODULE,
+             tc_cmtab[i].desc);
+    for (uint32_t i = 0; i < S->sym->n_syms; i++) {
+        const tal_sym_t *s = &S->sym->syms[i];
+        item(w, s->name, tc_ckind(s->kind), tc_kname(s->kind));
+    }
+}
+
+static void tal_items(jw_buf_t *w, const lsp_store_t *S, int ptal)
+{
+    items(w, tal_keywords, CIK_KEYWORD);
+    if (ptal) items(w, ptal_words, CIK_KEYWORD);
+    for (uint32_t i = 0; i < sf_n; i++)
+        item(w, sf_tab[i].name, CIK_FUNCTION, sf_tab[i].desc);
+    for (uint32_t i = 0; i < S->sym->n_syms; i++) {
+        const tal_sym_t *s = &S->sym->syms[i];
+        char detail[128];
+        const char *tn = type_name(s->type);
+        if (tn) snprintf(detail, sizeof detail, "%s %s", kind_name(s->kind), tn);
+        else snprintf(detail, sizeof detail, "%s", kind_name(s->kind));
+        item(w, s->name, sym_to_completion_kind(s->kind), detail);
+    }
+    for (uint32_t i = 0; i < gp_n; i++) {
+        char detail[300];
+        snprintf(detail, sizeof detail, "%s%s",
+                 gp_tab[i].superseded ? "(superseded) " : "", gp_tab[i].summary);
+        item(w, gp_tab[i].name, CIK_FUNCTION, detail);
+    }
+}
+
 static void handle_completion(lsp_server_t *srv, int64_t id,
                               const jv_doc_t *msg)
 {
-    (void)msg;  /* we offer everything regardless of position */
-
+    const lsp_doc_t *doc = ensure(srv, msg);
     jw_buf_t w;
     jw_init(&w);
     jw_arr_open(&w);
-
-    /* keywords first -- the bread and butter */
-    for (int i = 0; tal_keywords[i]; i++) {
-        jw_obj_open(&w);
-        jw_key(&w, "label"); jw_str(&w, tal_keywords[i]);
-        jw_key(&w, "kind");  jw_int(&w, CIK_KEYWORD);
-        jw_obj_close(&w);
+    if (doc && doc->lang == LANG_TACL) {
+        int64_t line = jv_get_int(msg, "params.position.line") + 1;
+        int64_t col  = jv_get_int(msg, "params.position.character") + 1;
+        tacl_items(&w, &srv->store,
+                   tc_ctx(doc->src, doc->src_len, (uint32_t)line, (uint32_t)col));
+    } else {
+        tal_items(&w, &srv->store, doc && doc->lang == LANG_PTAL);
     }
-
-    /* then every symbol we know about */
-    const tal_symtab_t *sym = srv->store.sym;
-    for (uint32_t i = 0; i < sym->n_syms; i++) {
-        const tal_sym_t *s = &sym->syms[i];
-        jw_obj_open(&w);
-        jw_key(&w, "label");  jw_str(&w, s->name);
-        jw_key(&w, "kind");   jw_int(&w, sym_to_completion_kind(s->kind));
-
-        /* detail shows the type/kind so you know what
-         * you're completing into your code */
-        char detail[128] = {0};
-        const char *tn = type_name(s->type);
-        if (tn)
-            snprintf(detail, sizeof(detail), "%s %s", kind_name(s->kind), tn);
-        else
-            snprintf(detail, sizeof(detail), "%s", kind_name(s->kind));
-        jw_key(&w, "detail"); jw_str(&w, detail);
-
-        jw_obj_close(&w);
-    }
-
     jw_arr_close(&w);
     lsp_respond(id, &w);
 }
@@ -718,23 +869,98 @@ static void handle_completion(lsp_server_t *srv, int64_t id,
  * trying to figure out what type MSG is.
  * ================================================================ */
 
+static int tacl_hover(const lsp_store_t *S, uint32_t line, uint32_t col,
+                      char *out, size_t n)
+{
+    const tal_tok_t *t = tok_at(S->lex, line, col);
+    if (!t) return 0;
+    const char *s = tal_str(S->lex, t->off);
+    if (t->kind == TC_BUILTIN) {
+        const tc_ent_t *e = tc_bfind(s, t->len);
+        if (!e) return 0;
+        snprintf(out, n, "```tacl\n%s\n```\n%s%s", e->name, e->desc,
+                 e->restricted ? " (super-group only)" : "");
+        return 1;
+    }
+    const tal_sym_t *y = tc_symat(S, t);
+    if (y) {
+        snprintf(out, n, "```tacl\n%s %s\n```\nDeclared at line %u",
+                 tc_kname(y->kind), y->name, y->def_line);
+        return 1;
+    }
+    const tc_ent_t *e = tc_cfind(s, t->len);
+    if (!e) return 0;
+    snprintf(out, n, "```tacl\n%s\n```\n%s%s", e->name, e->desc,
+             e->restricted ? " (restricted)" : "");
+    return 1;
+}
+
+static int tal_ref(const lsp_store_t *S, uint32_t line, uint32_t col,
+                   char *out, size_t n)
+{
+    const tal_tok_t *t = tok_at(S->lex, line, col);
+    if (!t) return 0;
+    const char *s = tal_str(S->lex, t->off);
+    if (t->kind == TK_IDENT) {
+        const gp_ent_t *g = gp_find(s, t->len);
+        if (!g) return 0;
+        snprintf(out, n, "```tal\n%s\n```\n%s%s\n\n*Guardian Procedure Calls Reference Manual*",
+                 g->syntax[0] ? g->syntax : g->name, g->summary,
+                 g->superseded ? "\n\nSuperseded, see the manual for the replacement." : "");
+        return 1;
+    }
+    if (t->kind == TK_DOLLAR || t->kind == TK_DOLLAR_CARRY || t->kind == TK_DOLLAR_OVERFLOW) {
+        const sf_ent_t *f = sf_find(s, t->len);
+        if (!f) return 0;
+        snprintf(out, n, "```tal\n%s\n```\n%s", f->syntax[0] ? f->syntax : f->name, f->desc);
+        return 1;
+    }
+    return 0;
+}
+
+static void respond_md(int64_t id, const char *md)
+{
+    jw_buf_t w;
+    jw_init(&w);
+    jw_obj_open(&w);
+    jw_key(&w, "contents");
+    jw_obj_open(&w);
+      jw_key(&w, "kind");  jw_str(&w, "markdown");
+      jw_key(&w, "value"); jw_str(&w, md);
+    jw_obj_close(&w);
+    jw_obj_close(&w);
+    lsp_respond(id, &w);
+}
+
 static void handle_hover(lsp_server_t *srv, int64_t id,
                          const jv_doc_t *msg)
 {
     /* LSP positions are 0-based, our internals are 1-based */
     int64_t line = jv_get_int(msg, "params.position.line") + 1;
     int64_t col  = jv_get_int(msg, "params.position.character") + 1;
+    const lsp_doc_t *doc = ensure(srv, msg);
+    char hover[2048];
+
+    if (doc && doc->lang == LANG_TACL) {
+        if (tacl_hover(&srv->store, (uint32_t)line, (uint32_t)col, hover, sizeof hover))
+            respond_md(id, hover);
+        else
+            lsp_respond_null(id);
+        return;
+    }
 
     const tal_sym_t *sym = tal_sym_at(srv->store.sym,
                                        srv->store.lex, srv->store.prs,
                                        (uint32_t)line, (uint32_t)col);
     if (!sym) {
-        lsp_respond_null(id);
+        if (tal_ref(&srv->store, (uint32_t)line, (uint32_t)col, hover, sizeof hover))
+            respond_md(id, hover);
+        else
+            lsp_respond_null(id);
         return;
     }
 
     /* build a markdown hover card */
-    char hover[512];
     const char *tn = type_name(sym->type);
 
     if (sym->kind == TS_PROC || sym->kind == TS_SUBPROC) {
@@ -765,17 +991,7 @@ static void handle_hover(lsp_server_t *srv, int64_t id,
                  sym->name, kind_name(sym->kind), sym->def_line);
     }
 
-    jw_buf_t w;
-    jw_init(&w);
-    jw_obj_open(&w);
-    jw_key(&w, "contents");
-    jw_obj_open(&w);
-      jw_key(&w, "kind");  jw_str(&w, "markdown");
-      jw_key(&w, "value"); jw_str(&w, hover);
-    jw_obj_close(&w);
-    jw_obj_close(&w);
-
-    lsp_respond(id, &w);
+    respond_md(id, hover);
 }
 
 /* ================================================================
@@ -799,9 +1015,13 @@ static void handle_definition(lsp_server_t *srv, int64_t id,
         return;
     }
 
-    const tal_sym_t *sym = tal_sym_at(srv->store.sym,
-                                       srv->store.lex, srv->store.prs,
-                                       (uint32_t)line, (uint32_t)col);
+    const lsp_doc_t *doc = ensure(srv, msg);
+    const tal_sym_t *sym;
+    if (doc && doc->lang == LANG_TACL)
+        sym = tc_symat(&srv->store, tok_at(srv->store.lex, (uint32_t)line, (uint32_t)col));
+    else
+        sym = tal_sym_at(srv->store.sym, srv->store.lex, srv->store.prs,
+                         (uint32_t)line, (uint32_t)col);
     if (!sym) {
         lsp_respond_null(id);
         return;
@@ -839,10 +1059,30 @@ static void handle_definition(lsp_server_t *srv, int64_t id,
  * recognise a procedure boundary by indentation alone.
  * ================================================================ */
 
+static int tc_skind(uint8_t kind)
+{
+    switch (kind) {
+    case TC_S_MACRO: case TC_S_ROUTINE: return SK_FUNCTION;
+    case TC_S_STRUCT:                   return SK_STRUCT;
+    case TC_S_ITEM:                     return SK_FIELD;
+    case TC_S_DIRECTORY:                return SK_NAMESPACE;
+    default:                            return SK_VARIABLE;
+    }
+}
+
+static int outline(const tal_sym_t *s, int tacl)
+{
+    if (tacl) return s->kind != TC_S_PUSHED && s->kind != TC_S_ITEM;
+    if (s->kind == TS_FIELD || s->kind == TS_PARAM) return 0;
+    if (s->kind == TS_VAR && s->scope > 0) return 0;
+    return 1;
+}
+
 static void handle_document_symbols(lsp_server_t *srv, int64_t id,
                                     const jv_doc_t *msg)
 {
-    (void)msg;
+    const lsp_doc_t *doc = ensure(srv, msg);
+    int tacl = doc && doc->lang == LANG_TACL;
 
     const tal_symtab_t *sym = srv->store.sym;
 
@@ -853,20 +1093,14 @@ static void handle_document_symbols(lsp_server_t *srv, int64_t id,
     for (uint32_t i = 0; i < sym->n_syms; i++) {
         const tal_sym_t *s = &sym->syms[i];
 
-        /* skip fields, params, and local variables -- the outline
-         * should show the big picture (procs, structs, globals),
-         * not every INT count in every BEGIN block. */
-        if (s->kind == TS_FIELD || s->kind == TS_PARAM)
-            continue;
-        if (s->kind == TS_VAR && s->scope > 0)
-            continue;
+        if (!outline(s, tacl)) continue;
 
         jw_obj_open(&w);
         jw_key(&w, "name"); jw_str(&w, s->name);
-        jw_key(&w, "kind"); jw_int(&w, sym_to_symbol_kind(s->kind));
+        jw_key(&w, "kind"); jw_int(&w, tacl ? tc_skind(s->kind) : sym_to_symbol_kind(s->kind));
 
         /* detail: type info if available */
-        const char *tn = type_name(s->type);
+        const char *tn = tacl ? tc_kname(s->kind) : type_name(s->type);
         if (tn) { jw_key(&w, "detail"); jw_str(&w, tn); }
 
         /* range and selectionRange both point at the declaration.

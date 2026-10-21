@@ -154,6 +154,7 @@ static const kw_entry_t keywords[] = {
     {"IF",          TK_IF},
     {"INT",         TK_INT},
     {"INTERRUPT",   TK_INTERRUPT},
+    {"LABEL",       TK_LABEL},
     {"LAND",        TK_LAND},
     {"LANGUAGE",    TK_LANGUAGE},
     {"LITERAL",     TK_LITERAL},
@@ -168,7 +169,6 @@ static const kw_entry_t keywords[] = {
     {"OTHERWISE",   TK_OTHERWISE},
     {"PRIV",        TK_PRIV},
     {"PROC",        TK_PROC},
-    {"READONLY",    TK_READONLY},
     {"REAL",        TK_REAL},
     {"RESIDENT",    TK_RESIDENT},
     {"RETURN",      TK_RETURN},
@@ -188,6 +188,26 @@ static const kw_entry_t keywords[] = {
     {"VARIABLE",    TK_VARIABLE},
     {"WHILE",       TK_WHILE},
     {"XOR",         TK_XOR},
+    {"BADDR",       TK_PTAL},
+    {"CBADDR",      TK_PTAL},
+    {"CWADDR",      TK_PTAL},
+    {"EXTADDR",     TK_PTAL},
+    {"EXT32ADDR",   TK_PTAL},
+    {"EXT64ADDR",   TK_PTAL},
+    {"FIELDALIGN",  TK_PTAL},
+    {"PROCADDR",    TK_PTAL},
+    {"PROC32ADDR",  TK_PTAL},
+    {"PROC64ADDR",  TK_PTAL},
+    {"PROCPTR",     TK_PTAL},
+    {"PROC32PTR",   TK_PTAL},
+    {"PROC64PTR",   TK_PTAL},
+    {"REFALIGNED",  TK_PTAL},
+    {"SGBADDR",     TK_PTAL},
+    {"SGWADDR",     TK_PTAL},
+    {"SGXBADDR",    TK_PTAL},
+    {"SGXWADDR",    TK_PTAL},
+    {"VOLATILE",    TK_PTAL},
+    {"WADDR",       TK_PTAL},
     {NULL, 0}
 };
 
@@ -392,6 +412,31 @@ static void lex_ident(tal_lex_t *L, char first)
     if (t) { t->line = sline; t->col = scol; }
 }
 
+/* ---- Quoted operators and bases ---- */
+
+static uint16_t lex_quoted(tal_lex_t *L)
+{
+    static const struct { const char *s; uint16_t kind; } q[] = {
+        {"+", TK_PLUS_UNSIGNED}, {"-", TK_MINUS_UNSIGNED},
+        {"*", TK_STAR_UNSIGNED}, {"/", TK_SLASH_UNSIGNED},
+        {"\\", TK_MOD_UNSIGNED}, {"<<", TK_LSHIFT_UNSIGNED},
+        {">>", TK_RSHIFT_UNSIGNED}, {":=", TK_MOVE_LR}, {"=:", TK_MOVE_RL},
+        {"G", TK_BASE}, {"L", TK_BASE}, {"S", TK_BASE}, {"P", TK_BASE},
+        {"SG", TK_BASE}, {"g", TK_BASE}, {"l", TK_BASE}, {"s", TK_BASE},
+        {"p", TK_BASE}, {NULL, 0}
+    };
+    for (int i = 0; q[i].s; i++) {
+        uint32_t n = (uint32_t)strlen(q[i].s);
+        if (L->pos + n < L->slen && L->src[L->pos + n] == '\'' &&
+            memcmp(L->src + L->pos, q[i].s, n) == 0) {
+            for (uint32_t k = 0; k < n + 1; k++) advance(L);
+            emit(L, q[i].kind, 0, n + 2, 0);
+            return q[i].kind;
+        }
+    }
+    return TK_EOF;
+}
+
 /* ---- Main Lexer Entry ---- */
 
 int tal_lex(tal_lex_t *L, const char *src, uint32_t len)
@@ -507,19 +552,17 @@ int tal_lex(tal_lex_t *L, const char *src, uint32_t len)
             continue;
         }
 
-        /* unsigned operators: (+) (-) (*) (/) */
-        if (c == '(' && (peek(L) == '+' || peek(L) == '-' ||
-                         peek(L) == '*' || peek(L) == '/')) {
-            char op = peek(L);
-            if (L->pos + 1 < L->slen && L->src[L->pos + 1] == ')') {
-                advance(L); advance(L);
-                uint16_t kind = (op == '+') ? TK_PLUS_UNSIGNED
-                              : (op == '-') ? TK_MINUS_UNSIGNED
-                              : (op == '*') ? TK_STAR_UNSIGNED
-                              :               TK_SLASH_UNSIGNED;
-                emit(L, kind, 0, 3, 0);
-                continue;
-            }
+        if (c == '\'') {
+            uint16_t kind = lex_quoted(L);
+            if (kind != TK_EOF) continue;
+            lex_diag(L, 1, "' must quote an operator ('+', '<<', ':=') or a base ('P', 'G', 'L', 'S')");
+            continue;
+        }
+
+        if (c == '-' && peek(L) == '>') {
+            advance(L);
+            emit(L, TK_ARROW, 0, 2, 0);
+            continue;
         }
 
         /* single-character tokens */
@@ -538,7 +581,6 @@ int tal_lex(tal_lex_t *L, const char *src, uint32_t len)
         case '<': emit(L, TK_LT,        0, 1, 0); break;
         case '>': emit(L, TK_GT,        0, 1, 0); break;
         case '@': emit(L, TK_AT,        0, 1, 0); break;
-        case '\'':emit(L, TK_APOSTROPHE,0, 1, 0); break;
         case '&': emit(L, TK_AMPERSAND, 0, 1, 0); break;
         case '[': emit(L, TK_LBRACKET,  0, 1, 0); break;
         case ']': emit(L, TK_RBRACKET,  0, 1, 0); break;
