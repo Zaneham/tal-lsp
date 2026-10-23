@@ -56,7 +56,7 @@ static const char *tk_name(uint16_t k)
 
 int main(int argc, char **argv)
 {
-    /* sample TAL programme from the Programmer's Guide */
+
     const char *sample =
         "! Sample TAL program\n"
         "PROC my_proc(msg, len) MAIN;\n"
@@ -75,7 +75,6 @@ int main(int argc, char **argv)
     const char *src = sample;
     uint32_t slen = (uint32_t)strlen(src);
 
-    /* allow file argument */
     if (argc > 1) {
         FILE *fp = fopen(argv[1], "rb");
         if (fp) {
@@ -84,10 +83,10 @@ int main(int argc, char **argv)
             fseek(fp, 0, SEEK_SET);
             char *buf = (char *)malloc((size_t)fsz + 1);
             if (buf) {
-                fread(buf, 1, (size_t)fsz, fp);
-                buf[fsz] = '\0';
+                size_t got = fread(buf, 1, (size_t)fsz, fp);
+                buf[got] = '\0';
                 src = buf;
-                slen = (uint32_t)fsz;
+                slen = (uint32_t)got;
             }
             fclose(fp);
         }
@@ -160,7 +159,6 @@ int main(int argc, char **argv)
         [PN_SOURCE]  = "SOURCE",
     };
 
-    /* simple tree dump */
     for (uint32_t i = 0; i < parse.n_nodes; i++) {
         pn_node_t *n = &parse.nodes[i];
         const char *nk = (n->kind < PN_COUNT && nk_names[n->kind])
@@ -170,8 +168,8 @@ int main(int argc, char **argv)
             text = tal_str(&lex, lex.toks[n->tok].off);
 
         printf("  [%3u] %-8s  %-16s  kids:", i, nk, text);
-        for (int j = 0; j < n->n_kids; j++)
-            printf(" %u", n->kids[j]);
+        for (uint32_t k = n->first; k; k = parse.nodes[k].next)
+            printf(" %u", k);
         printf("\n");
     }
 

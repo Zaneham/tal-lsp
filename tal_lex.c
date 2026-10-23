@@ -1,15 +1,7 @@
-/* tal_lex.c -- TAL lexer
+/* tal_lex.c -- TAL lexer. Keywords case-insensitive, identifiers kept as
+ * written, both comment forms (! and --) kept as tokens.
  *
- * Tokenises TAL source from the reference manual spec.
- * TAL is case-insensitive for keywords but preserves
- * case in identifiers because NonStop developers have
- * opinions about naming and we respect those opinions.
- *
- * Comments are two forms:
- *   ! to end of line (the common form)
- *   -- to end of line (the ANSI SQL-influenced form)
- * Both are preserved as tokens so the LSP can highlight
- * and display them on hover.
+ * (c) 2026 ZH. Apache 2.0.
  */
 
 #include "tal.h"
@@ -101,6 +93,7 @@ static char advance(tal_lex_t *L)
 static tal_tok_t *emit(tal_lex_t *L, uint16_t kind, uint32_t off,
                        uint32_t len, int64_t ival)
 {
+    if (L->n_toks >= TAL_MAX_TOKS - 1 && kind != TK_EOF) return NULL;
     if (L->n_toks >= TAL_MAX_TOKS) return NULL;
     tal_tok_t *t = &L->toks[L->n_toks++];
     t->kind  = kind;
@@ -110,8 +103,6 @@ static tal_tok_t *emit(tal_lex_t *L, uint16_t kind, uint32_t off,
     t->len   = len;
     t->ival  = ival;
 
-    /* single-char and multi-char operators pass off=0,
-     * so intern the actual source text for display */
     if (off == 0 && len > 0 && L->pos >= len) {
         t->off = tal_intern(L, L->src + L->pos - len, len);
     } else {
@@ -120,10 +111,7 @@ static tal_tok_t *emit(tal_lex_t *L, uint16_t kind, uint32_t off,
     return t;
 }
 
-/* ---- Keyword Table ----
- * Case-insensitive lookup. TAL keywords are all-caps in
- * the manual but mixed case in practice because NonStop
- * programmers are a free people. */
+/* ---- Keyword Table ---- */
 
 typedef struct { const char *name; uint16_t kind; } kw_entry_t;
 
@@ -234,7 +222,7 @@ static uint16_t lookup_keyword(const char *s, int len)
 
 static void lex_comment(tal_lex_t *L)
 {
-    /* both ! and -- comments run to end of line */
+
     uint32_t start = L->pos - 1;
     uint32_t sline = L->line;
     uint32_t scol  = L->col - 1;
@@ -250,7 +238,7 @@ static void lex_comment(tal_lex_t *L)
 
 static void lex_string(tal_lex_t *L)
 {
-    /* opening " already consumed */
+
     uint32_t start = L->pos;
     uint32_t sline = L->line;
     uint32_t scol  = L->col - 1;
@@ -266,7 +254,7 @@ static void lex_string(tal_lex_t *L)
     uint32_t len = L->pos - start;
     uint32_t off = tal_intern(L, L->src + start, len);
 
-    if (L->pos < L->slen) advance(L); /* consume closing " */
+    if (L->pos < L->slen) advance(L);
 
     tal_tok_t *t = emit(L, TK_STRING_LIT, off, len, 0);
     if (t) { t->line = sline; t->col = scol; }
@@ -281,11 +269,11 @@ static void lex_number(tal_lex_t *L, char first)
     int is_real = 0;
 
     if (first == '%') {
-        /* octal or hex constant */
+
         char next = peek(L);
         if (next == 'H' || next == 'h') {
-            /* hex: %Hnnnn */
-            advance(L); /* consume H */
+
+            advance(L);
             while (L->pos < L->slen && is_hex(L->src[L->pos])) {
                 char c = advance(L);
                 int d = (c >= '0' && c <= '9') ? c - '0'
@@ -294,24 +282,23 @@ static void lex_number(tal_lex_t *L, char first)
                 val = (val << 4) | d;
             }
         } else if (next == 'B' || next == 'b') {
-            /* binary: %Bnnnn (TAL extension) */
+
             advance(L);
             while (L->pos < L->slen && (L->src[L->pos] == '0' || L->src[L->pos] == '1')) {
                 val = (val << 1) | (advance(L) - '0');
             }
         } else {
-            /* octal: %nnn */
+
             while (L->pos < L->slen && is_octal(L->src[L->pos])) {
                 val = (val << 3) | (advance(L) - '0');
             }
         }
     } else {
-        /* decimal integer or real */
+
         val = first - '0';
         while (L->pos < L->slen && is_digit(L->src[L->pos]))
             val = val * 10 + (advance(L) - '0');
 
-        /* check for real: digit followed by dot or E/D */
         if (peek(L) == '.') {
             is_real = 1;
             advance(L);
@@ -319,12 +306,15 @@ static void lex_number(tal_lex_t *L, char first)
                 advance(L);
         }
         if (peek(L) == 'E' || peek(L) == 'e' ||
-            peek(L) == 'D' || peek(L) == 'd') {
+            peek(L) == 'L' || peek(L) == 'l') {
             is_real = 1;
             advance(L);
             if (peek(L) == '+' || peek(L) == '-') advance(L);
             while (L->pos < L->slen && is_digit(L->src[L->pos]))
                 advance(L);
+        } else if (peek(L) == 'D' || peek(L) == 'd' ||
+                   peek(L) == 'F' || peek(L) == 'f') {
+            advance(L);
         }
     }
 
@@ -349,9 +339,8 @@ static void lex_ident(tal_lex_t *L, char first)
     uint32_t len = L->pos - start;
     const char *text = L->src + start;
 
-    /* $ prefix: standard function */
     if (text[0] == '$') {
-        /* check for $CARRY and $OVERFLOW specifically */
+
         if (len == 6 && ci_eq(text, "$CARRY", 6)) {
             uint32_t off = tal_intern(L, text, len);
             tal_tok_t *t = emit(L, TK_DOLLAR_CARRY, off, len, 0);
@@ -372,10 +361,9 @@ static void lex_ident(tal_lex_t *L, char first)
 
     uint16_t kind = lookup_keyword(text, (int)len);
 
-    /* INT(32) and REAL(64) need lookahead */
     if (kind == TK_INT && peek(L) == '(') {
         uint32_t save = L->pos;
-        advance(L); /* ( */
+        advance(L);
         if (peek(L) == '3' && peek2(L) == '2') {
             advance(L); advance(L);
             if (peek(L) == ')') {
@@ -383,7 +371,7 @@ static void lex_ident(tal_lex_t *L, char first)
                 len = L->pos - start;
                 kind = TK_INT32;
             } else {
-                L->pos = save; /* rollback */
+                L->pos = save;
             }
         } else {
             L->pos = save;
@@ -447,34 +435,25 @@ int tal_lex(tal_lex_t *L, const char *src, uint32_t len)
     L->line = 1;
     L->col  = 1;
 
-    while (L->pos < L->slen) {
+    while (L->pos < L->slen && L->n_toks < TAL_MAX_TOKS - 1) {
         char c = advance(L);
 
-        /* whitespace */
         if (c == ' ' || c == '\t' || c == '\r') continue;
         if (c == '\n') continue;
 
-        /* comments */
         if (c == '!') { lex_comment(L); continue; }
         if (c == '-' && peek(L) == '-') { advance(L); lex_comment(L); continue; }
 
-        /* strings */
         if (c == '"') { lex_string(L); continue; }
 
-        /* numbers and % prefixed constants */
         if (is_digit(c)) { lex_number(L, c); continue; }
         if (c == '%') { lex_number(L, c); continue; }
 
-        /* compiler directives: ? at start of line (or after whitespace).
-         * TAL uses ?SOURCE, ?SEARCH, ?SECTION, ?IF etc.
-         * We specifically recognise ?SOURCE for cross-file analysis;
-         * the rest we swallow whole so they don't confuse the parser. */
         if (c == '?') {
             uint32_t dstart = L->pos - 1;
             uint32_t sline = L->line;
             uint32_t scol  = L->col - 1;
 
-            /* read the directive keyword */
             while (L->pos < L->slen && is_alpha(L->src[L->pos]))
                 advance(L);
 
@@ -482,17 +461,15 @@ int tal_lex(tal_lex_t *L, const char *src, uint32_t len)
             int is_source = (kwlen == 6 &&
                 ci_eq(L->src + dstart + 1, "SOURCE", 6));
 
-            /* skip whitespace after keyword */
             while (L->pos < L->slen && (L->src[L->pos] == ' ' || L->src[L->pos] == '\t'))
                 advance(L);
 
-            /* capture the argument (rest of line) */
             uint32_t arg_start = L->pos;
             while (L->pos < L->slen && L->src[L->pos] != '\n')
                 advance(L);
 
             if (is_source && L->pos > arg_start) {
-                /* intern the filename argument, trimming trailing whitespace */
+
                 uint32_t arg_end = L->pos;
                 while (arg_end > arg_start &&
                        (L->src[arg_end - 1] == ' ' || L->src[arg_end - 1] == '\r'))
@@ -502,7 +479,7 @@ int tal_lex(tal_lex_t *L, const char *src, uint32_t len)
                 tal_tok_t *t = emit(L, TK_SOURCE, off, alen, 0);
                 if (t) { t->line = sline; t->col = scol; }
             } else {
-                /* other directives: emit as generic directive token */
+
                 uint32_t dlen = L->pos - dstart;
                 uint32_t off = tal_intern(L, L->src + dstart, dlen);
                 tal_tok_t *t = emit(L, TK_DIRECTIVE, off, dlen, 0);
@@ -511,16 +488,13 @@ int tal_lex(tal_lex_t *L, const char *src, uint32_t len)
             continue;
         }
 
-        /* DEFINE body terminator */
         if (c == '#') {
             emit(L, TK_HASH, 0, 1, 0);
             continue;
         }
 
-        /* identifiers and keywords (including $ functions) */
         if (is_alpha(c) || c == '$') { lex_ident(L, c); continue; }
 
-        /* two-character operators */
         if (c == ':' && peek(L) == '=') {
             advance(L);
             emit(L, TK_ASSIGN, 0, 2, 0);
@@ -565,7 +539,6 @@ int tal_lex(tal_lex_t *L, const char *src, uint32_t len)
             continue;
         }
 
-        /* single-character tokens */
         switch (c) {
         case '+': emit(L, TK_PLUS,      0, 1, 0); break;
         case '-': emit(L, TK_MINUS,     0, 1, 0); break;
@@ -590,6 +563,8 @@ int tal_lex(tal_lex_t *L, const char *src, uint32_t len)
         }
     }
 
+    if (L->pos < L->slen)
+        lex_diag(L, 2, "token limit reached, the rest of the file is not analysed");
     emit(L, TK_EOF, 0, 0, 0);
     return L->n_diags == 0 ? 0 : -1;
 }

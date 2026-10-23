@@ -1,21 +1,7 @@
-/* tal_lsp.c -- TAL Language Server
+/* tal_lsp.c -- the server. JSON-RPC over stdin/stdout with Content-Length
+ * framing, single-threaded, full lex and parse on every open and change.
  *
- * The bit that actually talks to editors. Single-threaded,
- * blocking stdin read loop, JSON-RPC over pipes. The way
- * God intended language servers to start before everyone
- * decided they needed async runtimes and fourteen layers
- * of abstraction.
- *
- * On each document open/change we run the full lex+parse
- * pipeline and push diagnostics. The analysis buffers are
- * shared (one tal_lex_t, one parse_ctx_t) because they're
- * enormous and we're single-threaded -- no point allocating
- * a megabyte per open tab.
- *
- * Steps covered here:
- *   1. JSON-RPC transport (Content-Length framing)
- *   2. initialize / shutdown / exit handshake
- *   3. textDocument/didOpen, didChange, didClose
+ * (c) 2026 ZH. Apache 2.0.
  */
 
 #include "tal_lsp.h"
@@ -27,12 +13,7 @@
 #include <fcntl.h>
 #endif
 
-/* ================================================================
- * Logging
- *
- * Everything goes to stderr, which is the one channel the
- * LSP spec leaves alone. stdout is sacred protocol territory.
- * ================================================================ */
+/* ---- Logging ---- */
 
 void lsp_log(const char *fmt, ...)
 {
@@ -45,22 +26,7 @@ void lsp_log(const char *fmt, ...)
     va_end(ap);
 }
 
-/* ================================================================
- * JSON-RPC Transport
- *
- * The framing is HTTP-style headers followed by a JSON body:
- *
- *   Content-Length: 42\r\n
- *   \r\n
- *   {"jsonrpc":"2.0","method":"initialize",...}
- *
- * We only look at Content-Length. The spec allows Content-Type
- * but nobody sends it and we don't need it. Binary mode on
- * stdin/stdout is critical on Windows -- without it, \r\n
- * translation silently corrupts the Content-Length framing
- * and you spend a delightful afternoon wondering why your
- * server receives half a message.
- * ================================================================ */
+/* ---- JSON-RPC transport ---- */
 
 int lsp_read_msg(lsp_msg_t *msg)
 {
@@ -81,8 +47,6 @@ int lsp_read_msg(lsp_msg_t *msg)
     if (content_length < 0 || (uint32_t)content_length >= LSP_MSG_MAX)
         return -1;
 
-    /* fread in a loop because buffered I/O on pipes can
-     * return short reads even in blocking mode */
     uint32_t total = 0;
     while (total < (uint32_t)content_length) {
         size_t n = fread(msg->buf + total, 1,
@@ -103,18 +67,15 @@ void lsp_write_msg(const char *json, uint32_t len)
     fflush(stdout);
 }
 
-/* ================================================================
- * Response Helpers
- *
- * These wrap a result/error/notification in the JSON-RPC
- * envelope. The "splice result buffer directly into the
- * output" approach is crude but avoids a second serialisation
- * pass and we already have the data sitting in a jw_buf_t.
- * ================================================================ */
+/* ---- Response helpers ---- */
 
 void lsp_respond(int64_t id, jw_buf_t *result)
 {
     jw_buf_t w;
+    if (result->full || result->pos > LSP_OUT_MAX - 64) {
+        lsp_respond_err(id, -32603, "result too large for one message");
+        return;
+    }
     jw_init(&w);
     jw_obj_open(&w);
     jw_key(&w, "jsonrpc"); jw_str(&w, "2.0");
@@ -180,13 +141,7 @@ void lsp_notify(const char *method, jw_buf_t *params)
     lsp_write_msg(w.buf, w.pos);
 }
 
-/* ================================================================
- * Document Store
- *
- * Flat array, linear scan. With a 32-slot limit this is
- * faster than a hash table and anyone with 32 TAL files
- * open simultaneously should probably close some tabs.
- * ================================================================ */
+/* ---- Document store ---- */
 
 lsp_doc_t *doc_find(lsp_store_t *S, const char *uri)
 {
@@ -201,7 +156,7 @@ lsp_doc_t *doc_open(lsp_store_t *S, const char *uri,
                     const char *text, uint32_t len, int version,
                     uint8_t lang)
 {
-    /* reclaim closed slots before growing */
+
     lsp_doc_t *doc = NULL;
     for (int i = 0; i < S->n_docs; i++) {
         if (!S->docs[i].is_open) { doc = &S->docs[i]; break; }
@@ -257,24 +212,7 @@ void doc_close(lsp_store_t *S, const char *uri)
     }
 }
 
-/* ================================================================
- * Analysis Pipeline
- *
- * On every open or change, re-lex and re-parse the entire
- * document. This is the brute-force approach but TAL files
- * are small (NonStop programs are measured in pages, not
- * megabytes) and the lexer+parser are fast enough that
- * incremental analysis would be premature optimisation.
- *
- * Diagnostics from both phases are merged and published
- * in one notification. The severity values in tal_diag_t
- * (1=error, 2=warning, 3=info) happen to match the LSP
- * DiagnosticSeverity enum exactly, which is either good
- * planning or a happy coincidence. Line/column numbers
- * need converting from 1-based (TAL convention, matching
- * the reference manual) to 0-based (LSP convention,
- * matching the rest of 2020s tooling).
- * ================================================================ */
+/* ---- Analysis pipeline ---- */
 
 static void publish_diagnostics_3(const char *uri, const char *src,
                                   const tal_diag_t *d1, int n1,
@@ -331,10 +269,6 @@ static void publish_diagnostics_3(const char *uri, const char *src,
     lsp_log("published %d diagnostics for %s", total, uri);
 }
 
-/* Unused symbols worth warning about. Procs and labels
- * might be called from external files we can't see, so
- * we only flag local variables and parameters -- things
- * that are definitively dead if unreferenced. */
 static int should_warn_unused(const tal_sym_t *s)
 {
     if (s->ref_count > 0) return 0;
@@ -391,14 +325,10 @@ static void doc_analyze(lsp_store_t *S, lsp_doc_t *doc)
     memset(S->prs, 0, sizeof(*S->prs));
     tal_parse(S->prs, S->lex->toks, S->lex->n_toks, S->lex);
 
-    /* build the symbol table and count references */
     memset(S->sym, 0, sizeof(*S->sym));
     tal_sema(S->sym, S->prs, S->lex);
     tal_sema_refs(S->sym, S->lex);
 
-    /* collect unused-symbol warnings into a temporary
-     * diag array so we can publish them alongside the
-     * lex/parse diagnostics */
     tal_diag_t unused_diags[TAL_MAX_DIAGS];
     int n_unused = 0;
 
@@ -409,7 +339,7 @@ static void doc_analyze(lsp_store_t *S, lsp_doc_t *doc)
             d->line = s->def_line;
             d->col  = s->def_col;
             d->len  = (uint32_t)strlen(s->name);
-            d->severity = 2;  /* warning */
+            d->severity = 2;
             snprintf(d->msg, sizeof(d->msg),
                      "'%s' is declared but never used", s->name);
         }
@@ -417,7 +347,6 @@ static void doc_analyze(lsp_store_t *S, lsp_doc_t *doc)
 
     dialect(S, doc->lang, unused_diags, &n_unused);
 
-    /* publish all diagnostics in one go */
     publish_diagnostics_3(doc->uri, lang_src(doc->lang),
                           S->lex->diags, S->lex->n_diags,
                           S->prs->diags, S->prs->n_diags,
@@ -457,37 +386,22 @@ static const tal_sym_t *tc_symat(const lsp_store_t *S, const tal_tok_t *t)
     return tal_sym_lookup(S->sym, name);
 }
 
-/* ================================================================
- * LSP Handlers
- *
- * The spec has a precise state machine: you start
- * uninitialized, receive "initialize", respond with
- * capabilities, receive "initialized" (a notification
- * with no response -- thanks Microsoft), and then you're
- * live. "shutdown" means stop doing work, "exit" means
- * actually die. Two messages to quit because one would
- * have been too simple.
- * ================================================================ */
+/* ---- LSP handlers ---- */
 
 static void handle_initialize(lsp_server_t *srv, int64_t id,
                               const jv_doc_t *msg)
 {
-    (void)msg;  /* rootUri etc. -- we'll care about these later */
+    (void)msg;
 
     jw_buf_t w;
     jw_init(&w);
     jw_obj_open(&w);
       jw_key(&w, "capabilities");
       jw_obj_open(&w);
-        /* textDocumentSync = 1 means full document sync.
-         * The client sends us the entire file on every
-         * keystroke. Wasteful, but simple, and TAL files
-         * aren't War and Peace. */
+
         jw_key(&w, "textDocumentSync");
         jw_int(&w, 1);
 
-        /* completion: triggered by letters and $ (for
-         * standard functions like $LEN, $CARRY etc.) */
         jw_key(&w, "completionProvider");
         jw_obj_open(&w);
           jw_key(&w, "triggerCharacters");
@@ -539,8 +453,7 @@ static void handle_shutdown(lsp_server_t *srv, int64_t id)
 
 static void handle_exit(lsp_server_t *srv)
 {
-    /* exit code 0 if we got a clean shutdown first, 1 if
-     * the editor just pulled the plug without asking nicely */
+
     if (srv->state != LSP_SHUTDOWN)
         srv->exit_code = 1;
     srv->state = LSP_EXIT;
@@ -591,7 +504,6 @@ static void handle_did_change(lsp_server_t *srv, const jv_doc_t *msg)
         return;
     }
 
-    /* full sync means contentChanges[0].text is the entire document */
     uint32_t raw_len;
     const char *raw = jv_find(msg, "params.contentChanges.0.text", &raw_len);
     if (!raw) return;
@@ -613,8 +525,6 @@ static void handle_did_close(lsp_server_t *srv, const jv_doc_t *msg)
     if (jv_get_str(msg, "params.textDocument.uri", uri, sizeof(uri)) < 0)
         return;
 
-    /* clear diagnostics so the editor doesn't show stale
-     * squiggles for a file that's no longer open */
     jw_buf_t w;
     jw_init(&w);
     jw_obj_open(&w);
@@ -626,21 +536,8 @@ static void handle_did_close(lsp_server_t *srv, const jv_doc_t *msg)
     doc_close(&srv->store, uri);
 }
 
-/* ================================================================
- * Completion
- *
- * TAL has a small keyword set and most NonStop codebases have
- * a manageable number of symbols, so we can get away with
- * offering everything and letting the editor's fuzzy matcher
- * do the filtering. The alternative -- trying to be clever
- * about context -- would mean reimplementing half the parser
- * in the completion handler, which is the kind of mistake
- * you make once and regret for years.
- * ================================================================ */
+/* ---- Completion ---- */
 
-/* TAL keywords in the order a programmer might reach for them.
- * Grouped by function rather than alphabetically because nobody
- * thinks in alphabetical order when they're writing code. */
 static const char *tal_keywords[] = {
     "PROC", "SUBPROC", "MAIN", "FORWARD", "EXTERNAL",
     "BEGIN", "END",
@@ -663,8 +560,6 @@ static const char *tal_keywords[] = {
     NULL
 };
 
-/* LSP SymbolKind constants -- the spec numbers them and
- * we need to map our symbol kinds to theirs */
 enum {
     SK_FILE = 1, SK_MODULE = 2, SK_NAMESPACE = 3,
     SK_PACKAGE = 4, SK_CLASS = 5, SK_METHOD = 6,
@@ -677,7 +572,6 @@ enum {
     SK_OPERATOR = 25, SK_TYPEPARAM = 26
 };
 
-/* LSP CompletionItemKind */
 enum {
     CIK_TEXT = 1, CIK_METHOD = 2, CIK_FUNCTION = 3,
     CIK_CONSTRUCTOR = 4, CIK_FIELD = 5, CIK_VARIABLE = 6,
@@ -861,13 +755,7 @@ static void handle_completion(lsp_server_t *srv, int64_t id,
     lsp_respond(id, &w);
 }
 
-/* ================================================================
- * Hover
- *
- * Show what a symbol is and where it lives. This is the feature
- * that saves you from grepping through TACL scripts at 3am
- * trying to figure out what type MSG is.
- * ================================================================ */
+/* ---- Hover ---- */
 
 static int tacl_hover(const lsp_store_t *S, uint32_t line, uint32_t col,
                       char *out, size_t n)
@@ -935,7 +823,7 @@ static void respond_md(int64_t id, const char *md)
 static void handle_hover(lsp_server_t *srv, int64_t id,
                          const jv_doc_t *msg)
 {
-    /* LSP positions are 0-based, our internals are 1-based */
+
     int64_t line = jv_get_int(msg, "params.position.line") + 1;
     int64_t col  = jv_get_int(msg, "params.position.character") + 1;
     const lsp_doc_t *doc = ensure(srv, msg);
@@ -960,7 +848,6 @@ static void handle_hover(lsp_server_t *srv, int64_t id,
         return;
     }
 
-    /* build a markdown hover card */
     const char *tn = type_name(sym->type);
 
     if (sym->kind == TS_PROC || sym->kind == TS_SUBPROC) {
@@ -994,13 +881,7 @@ static void handle_hover(lsp_server_t *srv, int64_t id,
     respond_md(id, hover);
 }
 
-/* ================================================================
- * Go-to-Definition
- *
- * Click a name, jump to where it was declared. The feature
- * that every TAL developer has been doing manually with
- * CTRL-F since the dawn of EDIT. No longer.
- * ================================================================ */
+/* ---- Go-to-definition ---- */
 
 static void handle_definition(lsp_server_t *srv, int64_t id,
                               const jv_doc_t *msg)
@@ -1008,7 +889,6 @@ static void handle_definition(lsp_server_t *srv, int64_t id,
     int64_t line = jv_get_int(msg, "params.position.line") + 1;
     int64_t col  = jv_get_int(msg, "params.position.character") + 1;
 
-    /* we need the URI to send back a Location */
     char uri[LSP_MAX_URI];
     if (jv_get_str(msg, "params.textDocument.uri", uri, sizeof(uri)) < 0) {
         lsp_respond_null(id);
@@ -1027,7 +907,6 @@ static void handle_definition(lsp_server_t *srv, int64_t id,
         return;
     }
 
-    /* respond with a Location pointing to the declaration */
     jw_buf_t w;
     jw_init(&w);
     jw_obj_open(&w);
@@ -1050,14 +929,7 @@ static void handle_definition(lsp_server_t *srv, int64_t id,
     lsp_respond(id, &w);
 }
 
-/* ================================================================
- * Document Symbols
- *
- * The outline view. Shows PROCs, STRUCTs, LITERALs, DEFINEs
- * at a glance so you can navigate a TAL file without scrolling
- * through 2000 lines of MOVE statements and praying you
- * recognise a procedure boundary by indentation alone.
- * ================================================================ */
+/* ---- Document symbols ---- */
 
 static int tc_skind(uint8_t kind)
 {
@@ -1099,14 +971,9 @@ static void handle_document_symbols(lsp_server_t *srv, int64_t id,
         jw_key(&w, "name"); jw_str(&w, s->name);
         jw_key(&w, "kind"); jw_int(&w, tacl ? tc_skind(s->kind) : sym_to_symbol_kind(s->kind));
 
-        /* detail: type info if available */
         const char *tn = tacl ? tc_kname(s->kind) : type_name(s->type);
         if (tn) { jw_key(&w, "detail"); jw_str(&w, tn); }
 
-        /* range and selectionRange both point at the declaration.
-         * ideally range would span the whole PROC body, but
-         * that requires tracking END positions which we don't
-         * do yet. Good enough for now. */
         jw_key(&w, "range");
         jw_obj_open(&w);
           jw_key(&w, "start");
@@ -1142,19 +1009,7 @@ static void handle_document_symbols(lsp_server_t *srv, int64_t id,
     lsp_respond(id, &w);
 }
 
-/* ================================================================
- * Dispatch
- *
- * The state machine is simple:
- *   UNINITIALIZED -> only "initialize" accepted
- *   RUNNING       -> normal operation
- *   SHUTDOWN      -> only "exit" accepted
- *
- * Unknown requests get an error response. Unknown
- * notifications are silently ignored, per the spec.
- * This is one of the few places the LSP specification
- * shows restraint.
- * ================================================================ */
+/* ---- Dispatch ---- */
 
 static void lsp_dispatch(lsp_server_t *srv, const char *method,
                          int64_t id, int has_id, const jv_doc_t *doc)
@@ -1182,7 +1037,7 @@ static void lsp_dispatch(lsp_server_t *srv, const char *method,
     if (strcmp(method, "shutdown") == 0)
         handle_shutdown(srv, id);
     else if (strcmp(method, "initialized") == 0)
-        { /* the spec's way of saying "I acknowledge your acknowledgement" */ }
+        {  }
     else if (strcmp(method, "textDocument/didOpen") == 0)
         handle_did_open(srv, doc);
     else if (strcmp(method, "textDocument/didChange") == 0)
@@ -1201,17 +1056,11 @@ static void lsp_dispatch(lsp_server_t *srv, const char *method,
         lsp_respond_err(id, -32601, "Method not found");
 }
 
-/* ================================================================
- * Entry Point
- * ================================================================ */
+/* ---- Entry point ---- */
 
 int main(void)
 {
-    /* Binary mode is non-negotiable on Windows. Without it,
-     * the C runtime helpfully translates \n to \r\n on output
-     * and \r\n to \n on input, which completely destroys the
-     * Content-Length framing. Every Windows LSP server learns
-     * this lesson exactly once. */
+
 #ifdef _WIN32
     _setmode(_fileno(stdin),  _O_BINARY);
     _setmode(_fileno(stdout), _O_BINARY);

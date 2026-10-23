@@ -1,25 +1,14 @@
-/* tal_parse.c -- TAL recursive descent parser
+/* tal_parse.c -- TAL recursive descent parser, loose on purpose so
+ * half-typed code still gets an AST.
  *
- * Builds an AST from TAL tokens. The grammar follows the
- * reference manual structure closely enough that you can
- * hold both documents open and cross-reference.
- *
- * The parser is intentionally loose in some areas because
- * an LSP needs to handle partially-written code gracefully.
- * A strict parser that dies on the first missing semicolon
- * is useless when someone is mid-keystroke.
+ * (c) 2026 ZH. Apache 2.0.
  */
 
 #include "tal.h"
 #include <ctype.h>
 #include <stdio.h>
 
-/* Types now in tal.h */
-
-/* ---- Token Names ----
- * The parser's error messages used to say "expected token 31,
- * got 107" which is about as helpful as a NonStop crash dump
- * without the INSPECT manual. Now they say what they mean. */
+/* ---- Token Names ---- */
 
 const char *tal_tk_name(uint16_t k)
 {
@@ -113,7 +102,7 @@ static const tal_tok_t *eat(parse_ctx_t *P)
 {
     const tal_tok_t *t = cur(P);
     if (P->pos < P->n_toks) P->pos++;
-    /* skip comments during parsing */
+
     while (P->pos < P->n_toks && P->toks[P->pos].kind == TK_COMMENT)
         P->pos++;
     return t;
@@ -128,8 +117,6 @@ static const tal_tok_t *expect(parse_ctx_t *P, uint16_t kind)
 {
     if (at(P, kind)) return eat(P);
 
-    /* error recovery: tell the programmer what we wanted
-     * and what we got, in words they can actually use */
     if (P->n_diags < TAL_MAX_DIAGS) {
         tal_diag_t *d = &P->diags[P->n_diags++];
         const tal_tok_t *t = cur(P);
@@ -169,8 +156,11 @@ static uint32_t mk_node(parse_ctx_t *P, uint8_t kind, uint32_t tok)
 static void add_kid(parse_ctx_t *P, uint32_t parent, uint32_t child)
 {
     pn_node_t *n = &P->nodes[parent];
-    if (n->n_kids < PN_MAX_KIDS)
-        n->kids[n->n_kids++] = child;
+    if (!parent || !child || child == n->last || P->nodes[child].next) return;
+    if (n->last) P->nodes[n->last].next = child;
+    else n->first = child;
+    n->last = child;
+    n->n_kids++;
 }
 
 /* ---- Forward Declarations ---- */
@@ -180,18 +170,7 @@ static uint32_t parse_stmt(parse_ctx_t *P);
 static uint32_t parse_block(parse_ctx_t *P);
 static uint32_t postfix(parse_ctx_t *P, uint32_t nd, const tal_tok_t *t);
 
-/* ---- Expression Parser ----
- * Precedence climbing. TAL operator precedence from the
- * reference manual (Chapter 4, page 4-3):
- *   Highest: unary NOT, - (negate), @
- *            *, /, (*), (/)
- *            +, -, (+), (-)
- *            <<, >>
- *            <, >, <=, >=, =, <>
- *            AND, LAND
- *            OR, LOR, XOR
- *   Lowest
- */
+/* ---- Expression Parser ---- */
 
 static int prec_of(uint16_t kind)
 {
@@ -219,7 +198,6 @@ static uint32_t parse_primary(parse_ctx_t *P)
 {
     uint16_t k = peek_kind(P);
 
-    /* unary operators */
     if (k == TK_NOT || k == TK_MINUS || k == TK_AT) {
         const tal_tok_t *op = eat(P);
         uint32_t operand = parse_primary(P);
@@ -228,7 +206,6 @@ static uint32_t parse_primary(parse_ctx_t *P)
         return nd;
     }
 
-    /* parenthesised expression */
     if (k == TK_LPAREN) {
         eat(P);
         uint32_t expr = parse_expr(P);
@@ -236,28 +213,24 @@ static uint32_t parse_primary(parse_ctx_t *P)
         return expr;
     }
 
-    /* integer literal */
     if (k == TK_INT_LIT) {
         const tal_tok_t *t = eat(P);
         uint32_t nd = mk_node(P, PN_INTLIT, (uint32_t)(t - P->toks));
         return nd;
     }
 
-    /* real literal */
     if (k == TK_REAL_LIT) {
         const tal_tok_t *t = eat(P);
         uint32_t nd = mk_node(P, PN_REALLIT, (uint32_t)(t - P->toks));
         return nd;
     }
 
-    /* string literal */
     if (k == TK_STRING_LIT) {
         const tal_tok_t *t = eat(P);
         uint32_t nd = mk_node(P, PN_STRLIT, (uint32_t)(t - P->toks));
         return nd;
     }
 
-    /* $function call */
     if (k == TK_DOLLAR || k == TK_DOLLAR_CARRY || k == TK_DOLLAR_OVERFLOW) {
         const tal_tok_t *t = eat(P);
         uint32_t nd = mk_node(P, PN_STDFUNC, (uint32_t)(t - P->toks));
@@ -290,7 +263,6 @@ static uint32_t parse_primary(parse_ctx_t *P)
         return postfix(P, nd, t);
     }
 
-    /* fallthrough: unexpected token */
     const tal_tok_t *t = eat(P);
     return mk_node(P, PN_EMPTY, (uint32_t)(t - P->toks));
 }
@@ -408,7 +380,7 @@ static uint32_t parse_decl(parse_ctx_t *P)
     const tal_tok_t *type_tok = eat(P);
     uint32_t decl = mk_node(P, PN_DECL, (uint32_t)(type_tok - P->toks));
     if (at(P, TK_LPAREN)) skip_to(P, TK_RPAREN);
-    for (int n = 0; n < PN_MAX_KIDS; n++) {
+    for (int n = 0; n < 1024; n++) {
         decl_one(P, decl);
         if (!at(P, TK_COMMA)) break;
         eat(P);
@@ -418,46 +390,49 @@ static uint32_t parse_decl(parse_ctx_t *P)
 
 static uint32_t parse_if(parse_ctx_t *P)
 {
-    const tal_tok_t *ift = eat(P); /* IF */
+    const tal_tok_t *ift = eat(P);
     uint32_t nd = mk_node(P, PN_IF, (uint32_t)(ift - P->toks));
 
-    add_kid(P, nd, parse_expr(P)); /* condition */
+    add_kid(P, nd, parse_expr(P));
     expect(P, TK_THEN);
-    add_kid(P, nd, parse_stmt(P)); /* then branch */
+    add_kid(P, nd, parse_stmt(P));
 
     if (at(P, TK_ELSE)) {
         eat(P);
-        add_kid(P, nd, parse_stmt(P)); /* else branch */
+        add_kid(P, nd, parse_stmt(P));
     }
     return nd;
 }
 
 static uint32_t parse_while(parse_ctx_t *P)
 {
-    const tal_tok_t *wt = eat(P); /* WHILE */
+    const tal_tok_t *wt = eat(P);
     uint32_t nd = mk_node(P, PN_WHILE, (uint32_t)(wt - P->toks));
 
-    add_kid(P, nd, parse_expr(P)); /* condition */
+    add_kid(P, nd, parse_expr(P));
     expect(P, TK_DO);
-    add_kid(P, nd, parse_stmt(P)); /* body */
+    add_kid(P, nd, parse_stmt(P));
     return nd;
 }
 
 static uint32_t parse_for(parse_ctx_t *P)
 {
-    const tal_tok_t *ft = eat(P); /* FOR */
+    const tal_tok_t *ft = eat(P);
     uint32_t nd = mk_node(P, PN_FOR, (uint32_t)(ft - P->toks));
 
-    /* loop variable and range */
-    add_kid(P, nd, parse_expr(P)); /* var := start */
+    add_kid(P, nd, parse_expr(P));
+    if (at(P, TK_ASSIGN)) {
+        eat(P);
+        add_kid(P, nd, parse_expr(P));
+    }
     if (at(P, TK_TO) || at(P, TK_DOWNTO)) eat(P);
-    add_kid(P, nd, parse_expr(P)); /* limit */
+    add_kid(P, nd, parse_expr(P));
     if (at(P, TK_BY)) {
         eat(P);
-        add_kid(P, nd, parse_expr(P)); /* step */
+        add_kid(P, nd, parse_expr(P));
     }
     expect(P, TK_DO);
-    add_kid(P, nd, parse_stmt(P)); /* body */
+    add_kid(P, nd, parse_stmt(P));
     return nd;
 }
 
@@ -478,10 +453,10 @@ static void case_label(parse_ctx_t *P)
 
 static uint32_t parse_case(parse_ctx_t *P)
 {
-    const tal_tok_t *ct = eat(P); /* CASE */
+    const tal_tok_t *ct = eat(P);
     uint32_t nd = mk_node(P, PN_CASE, (uint32_t)(ct - P->toks));
 
-    add_kid(P, nd, parse_expr(P)); /* selector */
+    add_kid(P, nd, parse_expr(P));
     expect(P, TK_OF);
     expect(P, TK_BEGIN);
 
@@ -504,7 +479,7 @@ static uint32_t parse_case(parse_ctx_t *P)
 
 static uint32_t parse_call(parse_ctx_t *P)
 {
-    const tal_tok_t *ct = eat(P); /* CALL */
+    const tal_tok_t *ct = eat(P);
     uint32_t nd = mk_node(P, PN_CALL, (uint32_t)(ct - P->toks));
 
     if (at(P, TK_IDENT)) {
@@ -528,7 +503,7 @@ static uint32_t parse_call(parse_ctx_t *P)
 
 static uint32_t parse_block(parse_ctx_t *P)
 {
-    const tal_tok_t *bt = eat(P); /* BEGIN */
+    const tal_tok_t *bt = eat(P);
     uint32_t nd = mk_node(P, PN_BEGIN, (uint32_t)(bt - P->toks));
 
     while (!at(P, TK_END) && !at(P, TK_EOF)) {
@@ -551,13 +526,10 @@ static uint32_t parse_stmt(parse_ctx_t *P)
 {
     uint16_t k = peek_kind(P);
 
-    /* declarations */
     if (is_type_keyword(k)) return parse_decl(P);
 
-    /* compound statement */
     if (k == TK_BEGIN) return parse_block(P);
 
-    /* control flow */
     if (k == TK_IF)    return parse_if(P);
     if (k == TK_WHILE) return parse_while(P);
     if (k == TK_FOR)   return parse_for(P);
@@ -593,7 +565,7 @@ static uint32_t parse_stmt(parse_ctx_t *P)
         const tal_tok_t *mt = eat(P);
         uint32_t nd = mk_node(P, k == TK_MOVE ? PN_MOVE : PN_SCAN,
                               (uint32_t)(mt - P->toks));
-        /* MOVE/SCAN have complex syntax, for now consume to semicolon */
+
         while (!at(P, TK_SEMICOLON) && !at(P, TK_EOF))
             eat(P);
         return nd;
@@ -649,19 +621,11 @@ static uint32_t parse_stmt(parse_ctx_t *P)
         const tal_tok_t *dt = eat(P);
         uint32_t nd = mk_node(P, PN_DEFINE, (uint32_t)(dt - P->toks));
 
-        /* DEFINE name = body #;
-         * or DEFINE name(params) = body #;
-         *
-         * The body runs from '=' to '#' and can contain
-         * basically anything -- it's TAL's macro system.
-         * We capture the name and record the body range
-         * so hover can show the expansion. */
         if (at(P, TK_IDENT)) {
             const tal_tok_t *name = eat(P);
             add_kid(P, nd, mk_node(P, PN_IDENT, (uint32_t)(name - P->toks)));
         }
 
-        /* skip optional parameter list */
         if (at(P, TK_LPAREN)) {
             eat(P);
             while (!at(P, TK_RPAREN) && !at(P, TK_EOF))
@@ -669,13 +633,10 @@ static uint32_t parse_stmt(parse_ctx_t *P)
             if (at(P, TK_RPAREN)) eat(P);
         }
 
-        /* '=' or skip to body end */
         if (at(P, TK_EQ)) eat(P);
 
-        /* record body start token for sema to extract text */
         P->nodes[nd].flags = (uint16_t)P->pos;
 
-        /* consume body tokens until # or ; or EOF */
         while (!at(P, TK_HASH) && !at(P, TK_SEMICOLON) && !at(P, TK_EOF))
             eat(P);
         if (at(P, TK_HASH)) eat(P);
@@ -683,11 +644,9 @@ static uint32_t parse_stmt(parse_ctx_t *P)
         return nd;
     }
 
-    /* identifier: could be label, assignment, or bare call */
     if (k == TK_IDENT) {
         uint32_t lhs = parse_expr(P);
 
-        /* assignment */
         if (at(P, TK_ASSIGN)) {
             const tal_tok_t *eq = eat(P);
             uint32_t rhs = parse_expr(P);
@@ -697,20 +656,15 @@ static uint32_t parse_stmt(parse_ctx_t *P)
             return nd;
         }
 
-        /* label: ident followed by colon */
-        /* this is tricky because we already consumed the ident
-         * as an expression. check if we see a colon. */
         if (at(P, TK_COLON)) {
             eat(P);
             uint32_t nd = mk_node(P, PN_LABEL, P->nodes[lhs].tok);
             return nd;
         }
 
-        /* bare expression statement (e.g., function call without CALL) */
         return lhs;
     }
 
-    /* skip unrecognised tokens */
     skip_to_semi(P);
     return mk_node(P, PN_EMPTY, (uint32_t)(cur(P) - P->toks));
 }
@@ -719,17 +673,15 @@ static uint32_t parse_stmt(parse_ctx_t *P)
 
 static uint32_t parse_proc(parse_ctx_t *P)
 {
-    const tal_tok_t *pt = eat(P); /* PROC */
+    const tal_tok_t *pt = eat(P);
     uint32_t nd = mk_node(P, PN_PROC, (uint32_t)(pt - P->toks));
 
-    /* procedure name */
     if (at(P, TK_IDENT)) {
         const tal_tok_t *name = eat(P);
         uint32_t name_nd = mk_node(P, PN_IDENT, (uint32_t)(name - P->toks));
         add_kid(P, nd, name_nd);
     }
 
-    /* formal parameter list */
     if (at(P, TK_LPAREN)) {
         eat(P);
         while (!at(P, TK_RPAREN) && !at(P, TK_EOF)) {
@@ -744,32 +696,29 @@ static uint32_t parse_proc(parse_ctx_t *P)
         expect(P, TK_RPAREN);
     }
 
-    /* procedure attributes: MAIN, INTERRUPT, RESIDENT, etc */
     while (at(P, TK_MAIN) || at(P, TK_INTERRUPT) || at(P, TK_RESIDENT) ||
            at(P, TK_CALLABLE) || at(P, TK_PRIV) || at(P, TK_VARIABLE) ||
            at(P, TK_EXTENSIBLE) || at(P, TK_FORWARD) || at(P, TK_EXTERNAL) ||
            at(P, TK_LANGUAGE)) {
         eat(P);
-        /* LANGUAGE takes a string arg */
+
         if (P->toks[P->pos - 1].kind == TK_LANGUAGE && at(P, TK_IDENT))
             eat(P);
     }
 
     expect(P, TK_SEMICOLON);
 
-    /* procedure body: parameter declarations, local decls, statements */
-    /* parameter type declarations come first */
     while (is_type_keyword(peek_kind(P))) {
         add_kid(P, nd, parse_decl(P));
         if (at(P, TK_SEMICOLON)) eat(P);
     }
 
-    /* body: either BEGIN/END or single statement */
     if (at(P, TK_BEGIN)) {
         add_kid(P, nd, parse_block(P));
     }
 
     if (at(P, TK_SEMICOLON)) eat(P);
+    P->nodes[nd].etok = P->pos;
     return nd;
 }
 
@@ -783,17 +732,17 @@ uint32_t tal_parse(parse_ctx_t *P, const tal_tok_t *toks, uint32_t n_toks,
     P->n_toks = n_toks;
     P->lex    = lex;
 
-    /* skip leading comments */
     while (P->pos < P->n_toks && P->toks[P->pos].kind == TK_COMMENT)
         P->pos++;
 
+    (void)mk_node(P, PN_EMPTY, 0);
     uint32_t root = mk_node(P, PN_BEGIN, 0);
 
     while (!at(P, TK_EOF)) {
         if (at(P, TK_PROC) || at(P, TK_SUBPROC)) {
             add_kid(P, root, parse_proc(P));
         } else if (is_type_keyword(peek_kind(P))) {
-            /* global declarations */
+
             add_kid(P, root, parse_decl(P));
             if (at(P, TK_SEMICOLON)) eat(P);
         } else if (at(P, TK_LITERAL)) {
@@ -803,23 +752,22 @@ uint32_t tal_parse(parse_ctx_t *P, const tal_tok_t *toks, uint32_t n_toks,
             add_kid(P, root, parse_stmt(P));
             if (at(P, TK_SEMICOLON)) eat(P);
         } else if (at(P, TK_NAME) || at(P, TK_BLOCK)) {
-            /* NAME/BLOCK declarations */
+
             eat(P);
             if (at(P, TK_IDENT)) eat(P);
             if (at(P, TK_SEMICOLON)) eat(P);
         } else if (at(P, TK_SOURCE)) {
-            /* ?SOURCE filename -- record it so the LSP can
-             * resolve cross-file references */
+
             const tal_tok_t *st = eat(P);
             uint32_t nd = mk_node(P, PN_SOURCE, (uint32_t)(st - P->toks));
             add_kid(P, root, nd);
         } else if (at(P, TK_DIRECTIVE)) {
-            /* other ?directives -- skip them */
+
             eat(P);
         } else if (at(P, TK_COMMENT)) {
             eat(P);
         } else {
-            /* skip unrecognised top-level tokens */
+
             eat(P);
         }
     }

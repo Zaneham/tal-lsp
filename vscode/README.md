@@ -1,71 +1,68 @@
-# TAL for NonStop
+# TAL and TACL for NonStop
 
-Language server for TAL (Transaction Application Language), the language that has been quietly moving your money since 1974.
+A language server for TAL, pTAL and TACL on HPE NonStop.
 
-Every time you withdraw cash from an ATM, buy shares on a stock exchange, or tap your card at a terminal, there's a decent chance a NonStop system is somewhere in that chain running TAL code written by someone who is now retired. The machines are fault-tolerant. The code is not going anywhere. The developers maintaining it have been navigating with CTRL-F and prayer for fifty years.
+## What It Does
 
-This is the first LSP for TAL. Better late than never.
+**TAL and pTAL**
 
-## Features
+- **Diagnostics** that say what went wrong in words. Unused variable warnings. pTAL mode flags `CODE`, `STACK`, `STORE`, `USE` and `DROP`, TAL mode flags the pTAL-only words.
+- **Autocomplete** for keywords, every symbol in the file with its type, the `$` standard functions and all 383 Guardian procedure calls.
+- **Hover** for what a thing is, its type and where it was declared. DEFINEs show their expansion. Guardian procedures show the TAL calling syntax from the manual, `! i,o` annotations included.
+- **Go to Definition** and **Document Symbols**.
 
-### Diagnostics
-Error messages that say what went wrong in actual words. Unused variable warnings for the dead code nobody dares touch.
+![Hover on WRITEX](https://raw.githubusercontent.com/Zaneham/tal-lsp/main/screenshots/hover-guardian.png)
 
-### Autocomplete
-All 61 TAL keywords plus every symbol in the file — PROCs, variables, LITERALs, DEFINEs — with type and kind information. Start typing, the editor does the rest.
+**TACL**
 
-### Hover
-Mouse over any identifier. See what it is, what type it is, where it was declared. For DEFINEs, see the full macro expansion. No more grepping through TACL scripts at 3am to figure out what `MSG^BUF` resolves to.
+- **Diagnostics** for unbalanced `[ ]`, a `{` comment with no `}`, a `|label|` outside `#IF`, `#CASE`, `#LOOP` or `#DEF`, `|ELSE|` before `|THEN|`, `|OTHERWISE|` not last, `#LOOP` labels out of order, `?TACL` not on line one, a `~` before a non-metacharacter, lines over 239 characters, a `#name` that isn't a built-in, and `#PUSH`ed variables never used.
+- **Autocomplete** that follows context. `#` gives the 229 built-ins, `|` the labels, `?` the directives, `[#ARGUMENT` its alternatives, `?SECTION name` the variable types, and anywhere else the `:UTILS:TACL` commands plus your own variables.
+- **Hover** for every built-in and command with its description from the reference manual.
+- **Go to Definition** and **Document Symbols** for `?SECTION`s, `#DEF`s and STRUCT items.
 
-### Go to Definition
-Click a name, jump to its declaration. The feature every TAL developer has been simulating with CTRL-F since the EDIT days.
+![TACL diagnostics](https://raw.githubusercontent.com/Zaneham/tal-lsp/main/screenshots/diagnostics-tacl.png)
 
-### Document Symbols
-Outline view in the sidebar. PROCs, STRUCTs, LITERALs, DEFINEs at a glance. Navigate a TAL file without scrolling through 2000 lines of MOVE statements hoping to spot a procedure boundary by indentation alone.
+**Syntax highlighting** for all three. The TAL and pTAL grammars cover keywords, types, the quoted operators, standard functions, `%H` hex, `%B` binary and `%` octal literals, compiler directives and both comment forms (`!` and `--`). The TACL grammar covers the metacharacters, built-ins, labels, directives and `==` and `{ }` comments.
 
-### Syntax Highlighting
-TextMate grammar covering keywords, types, operators, standard functions (`$LEN`, `$CARRY`), numeric literals (`%H` hex, `%B` binary, `%` octal), compiler directives, and both comment forms (`!` and `--`).
+## TAL
 
-## What TAL Looks Like
+![Peek definition in a $RECEIVE server](https://raw.githubusercontent.com/Zaneham/tal-lsp/main/screenshots/peek-definition.png)
 
-For the uninitiated:
+Yes, that caret in `sum^words` is a valid identifier character. Yes, `:=` is assignment. Yes, `IF <` tests the hardware condition code the last call left behind. Yes, `#` terminates DEFINE bodies because semicolons were already taken. Yes, `'+'` with the quotes is unsigned addition, because why have one addition when you can have two.
 
-```tal
-?SOURCE SYSLIB
-LITERAL max_msg = 4096;
-DEFINE check_status(s) = IF s < 0 THEN CALL ABEND #;
+## pTAL
 
-PROC server^main(cmd, cmd^len) MAIN;
-  STRING .cmd;
-  INT cmd^len;
-  BEGIN
-    INT status;
-    status := 0;
-    WHILE status >= 0 DO
-    BEGIN
-      CALL READUPDATE(recv^file, buffer, 512);
-      IF $CARRY THEN
-        CALL PROCESS^MSG(buffer, status)
-      ELSE
-        status := -1;
-    END;
-  END;
-```
+![pTAL diagnostics](https://raw.githubusercontent.com/Zaneham/tal-lsp/main/screenshots/diagnostics-ptal.png)
 
-Yes, that caret in `server^main` is a valid identifier character. Yes, `:=` is assignment. Yes, `$CARRY` checks a hardware flag. Yes, `#` terminates DEFINE bodies because semicolons were already taken. Welcome to NonStop.
+pTAL is the portable dialect, the same language with fewer ways to touch the registers.
+
+## TACL
+
+![TACL completion in a library file](https://raw.githubusercontent.com/Zaneham/tal-lsp/main/screenshots/completion-tacl.png)
+
+Square brackets evaluate, `==` starts a comment, vertical bars make labels, a tilde escapes, and every variable is a stack.
+
+## Files Without Extensions
+
+Guardian has no file extensions, so the extension reads the first line. `?TACL` or `?SECTION name TYPE` opens as TACL. A compiler directive, a `!` comment or a `PROC`, `NAME`, `LITERAL`, `INT`, `STRING`, `STRUCT` or `DEFINE` declaration opens as TAL. For anything else, right-click the file and pick **NonStop > Treat as TAL / pTAL / TACL**. The choice is written to the workspace's `files.associations` so it sticks; turn `tal.rememberAssociations` off if you'd rather it didn't. `.tal`, `.ptal` and `.tacl` work too.
+
+![SYSINFO with no extension](https://raw.githubusercontent.com/Zaneham/tal-lsp/main/screenshots/sysinfo.png)
+
+## Vibecoding Ya Switch
+
+The language server is not only for people. Cursor and GitHub Copilot read what it reports, so the model gets the same diagnostics, definitions and hover text you do. I tried this on Cursor with the free credits. Without the LSP, Grok knew nothing about TACL. It skipped the `?TACL ROUTINE` line and threw in C features. With the LSP running it knew what it was doing. Pretty please check with your company's policies on AI before you go chucking an LLM into a NonStop computer. I would like my debit card to work :-)
 
 ## Installation
 
-1. Install from the VS Code marketplace
-2. Open any `.tal` file
-3. Congratulations, you now have tooling that the financial system should have had twenty years ago
+Install from the Marketplace and open a file. The server binary is bundled.
 
-### Manual Setup
+To build it yourself:
 
 ```bash
 git clone https://github.com/Zaneham/tal-lsp
 cd tal-lsp && make
 cd vscode && npm install && npm run compile
+npx @vscode/vsce package --allow-missing-repository
 code --install-extension tal-lsp-*.vsix
 ```
 
@@ -73,21 +70,18 @@ code --install-extension tal-lsp-*.vsix
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `tal.serverPath` | (bundled) | Path to `tal-lspd` binary |
-| `tal.trace.server` | `off` | Protocol trace level |
+| `tal.serverPath` | (bundled) | Path to the `tal-lspd` binary |
+| `tal.rememberAssociations` | `true` | Write right-click language choices to the workspace's `files.associations` |
+| `tal.trace.server` | `off` | Protocol trace level (`off`, `messages`, `verbose`) |
 
 ## Reference
 
-Built from the TAL Reference Manual (526371-001, September 2003) and the TAL Programmer's Guide (096254, September 1993).
+Built from the TAL Reference Manual (526371-001), the TAL Programmer's Guide (096254), the pTAL Reference Manual (523746-009), the TACL Reference Manual (429513-017), the TACL Programming Guide (107365) and the Guardian Procedure Calls Reference Manual (522629-030).
 
 ## Contact
 
-Found a bug? Have war stories about TAL codebases older than you are? Just want to tell someone you still write TAL and have them believe you?
-
-**Zane Hambly** — zanehambly@gmail.com — [github.com/Zaneham](https://github.com/Zaneham)
-
-Based in New Zealand, where it's already tomorrow and the ATMs work just fine.
+**Zane Hambly**, my contact information is available at zanehambly.com :-)
 
 ## License
 
-Apache 2.0 — (c) 2026 ZH
+Apache 2.0, (c) 2026 ZH

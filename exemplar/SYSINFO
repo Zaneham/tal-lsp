@@ -1,0 +1,13 @@
+?TACL ROUTINE
+== SYSINFO: who and where am I. No file extension on purpose, this
+== is what a file looks like when it comes off the Guardian side.
+#FRAME
+#PUSH pid
+#SET pid [#MYPID]
+#OUTPUT System    [#MYSYSTEM]
+#OUTPUT Process   [pid] in CPU [#PROCESSINFO /CPU/ [pid]]
+#OUTPUT User      [#USERNAME [#PROCESSINFO /PAID/ [pid]]]
+#OUTPUT Terminal  [#MYTERM]
+#OUTPUT TACL      [#TACLVERSION]
+#OUTPUT Time      [#CONTIME [#TIMESTAMP]]
+#UNFRAME

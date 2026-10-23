@@ -61,7 +61,7 @@ static void diag(tal_lex_t *L, uint8_t sev, uint32_t line, uint32_t col,
 static void put(tal_lex_t *L, uint16_t kind, uint32_t start, uint32_t sline,
                 uint32_t scol, int64_t ival)
 {
-    if (L->n_toks >= TAL_MAX_TOKS || start > L->pos) return;
+    if (L->n_toks >= TAL_MAX_TOKS - 2 || start > L->pos) return;
     uint32_t len = L->pos - start;
     tal_tok_t *t = &L->toks[L->n_toks++];
     t->kind = kind;
@@ -71,6 +71,16 @@ static void put(tal_lex_t *L, uint16_t kind, uint32_t start, uint32_t sline,
     t->len = len;
     t->ival = ival;
     t->off = tal_intern(L, L->src + start, len);
+}
+
+static void tail(tal_lex_t *L, uint16_t kind)
+{
+    if (L->n_toks >= TAL_MAX_TOKS) return;
+    tal_tok_t *t = &L->toks[L->n_toks++];
+    memset(t, 0, sizeof *t);
+    t->kind = kind;
+    t->line = L->line;
+    t->col = L->col;
 }
 
 /* ---- Pieces ---- */
@@ -260,6 +270,10 @@ int tc_lex(tal_lex_t *L, const char *src, uint32_t len)
     uint32_t lstart = 0;
     int cont = 0;
     for (uint32_t n = 0; n < TAL_MAX_TOKS && L->pos < L->slen; n++) {
+        if (L->n_toks >= TAL_MAX_TOKS - 2) {
+            diag(L, 2, L->line, 1, 1, "token limit reached, the rest of the file is not analysed");
+            break;
+        }
         char c = at(L, 0);
         uint32_t start = L->pos, sline = L->line, scol = L->col;
         if (c == '\n') { newline(L, lstart, cont); lstart = L->pos; cont = 0; continue; }
@@ -290,7 +304,7 @@ int tc_lex(tal_lex_t *L, const char *src, uint32_t len)
     }
     if (L->pos - lstart > TC_MAXLINE)
         diag(L, 2, L->line, 1, TC_MAXLINE, "line is longer than 239 characters, TACL truncates it");
-    put(L, TC_EOL, L->pos, L->line, L->col, 0);
-    put(L, TC_EOF, L->pos, L->line, L->col, 0);
+    tail(L, TC_EOL);
+    tail(L, TC_EOF);
     return L->n_diags == 0 ? 0 : -1;
 }

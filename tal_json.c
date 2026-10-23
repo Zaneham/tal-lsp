@@ -1,32 +1,13 @@
-/* tal_json.c -- Minimal JSON for LSP
+/* tal_json.c -- JSON for LSP. The reader walks the raw text by dot path and
+ * never allocates, the writer fills a fixed buffer.
  *
- * The LSP spec demands JSON-RPC, and JSON-RPC demands
- * a JSON parser. Rather than dragging in cJSON or jansson
- * for what amounts to plucking five fields from a known
- * message shape, we roll our own.
- *
- * The reader never allocates. It walks the raw JSON buffer
- * with a dot-path query ("params.textDocument.uri") and
- * returns a pointer into the original text. This works
- * because LSP messages are small, predictable, and we only
- * ever need a handful of fields from each one.
- *
- * The writer emits into a fixed buffer with a comma-tracking
- * depth stack, because life is too short to debug off-by-one
- * comma errors in hand-assembled JSON strings.
+ * (c) 2026 ZH. Apache 2.0.
  */
 
 #include "tal_lsp.h"
 #include <ctype.h>
 
-/* ================================================================
- * Scanner Primitives
- *
- * These walk a position cursor forward over JSON structure
- * without extracting anything. The skip functions are the
- * workhorses that let jv_find hop over values it doesn't
- * care about -- which is most of them.
- * ================================================================ */
+/* ---- Scanner primitives ---- */
 
 static void skip_ws(const char *s, uint32_t *p, uint32_t len)
 {
@@ -35,8 +16,6 @@ static void skip_ws(const char *s, uint32_t *p, uint32_t len)
         (*p)++;
 }
 
-/* Strings need special handling because \" is not a closing
- * quote and editors love sending paths full of backslashes. */
 static void skip_string(const char *s, uint32_t *p, uint32_t len)
 {
     if (*p >= len || s[*p] != '"') return;
@@ -48,10 +27,6 @@ static void skip_string(const char *s, uint32_t *p, uint32_t len)
     }
 }
 
-/* Skip any JSON value by its opening character. Objects and
- * arrays are handled with a depth counter rather than recursion
- * because TAL files are not going to blow the stack but our
- * paranoia about stack depth is justified by experience. */
 static void skip_value(const char *s, uint32_t *p, uint32_t len)
 {
     skip_ws(s, p, len);
@@ -78,11 +53,11 @@ static void skip_value(const char *s, uint32_t *p, uint32_t len)
             else if (s[*p] == ']') depth--;
             (*p)++;
         }
-    } else if (c == 't') { *p += 4;       /* true  */
-    } else if (c == 'f') { *p += 5;       /* false */
-    } else if (c == 'n') { *p += 4;       /* null  */
+    } else if (c == 't') { *p += 4;
+    } else if (c == 'f') { *p += 5;
+    } else if (c == 'n') { *p += 4;
     } else {
-        /* numbers: just eat digits, signs, dots, exponents */
+
         while (*p < len && (isdigit((unsigned char)s[*p]) ||
                s[*p] == '-' || s[*p] == '+' ||
                s[*p] == '.' || s[*p] == 'e' || s[*p] == 'E'))
@@ -90,8 +65,6 @@ static void skip_value(const char *s, uint32_t *p, uint32_t len)
     }
 }
 
-/* Check whether the quoted string at pos matches a key name.
- * We compare inside the quotes so "method" matches method. */
 static int match_key(const char *s, uint32_t pos, uint32_t len,
                      const char *key, int keylen)
 {
@@ -102,18 +75,7 @@ static int match_key(const char *s, uint32_t pos, uint32_t len,
     return s[pos + keylen] == '"';
 }
 
-/* ================================================================
- * Path-Based Query
- *
- * The core trick: split "params.textDocument.uri" on dots,
- * then at each level scan the JSON object for the matching
- * key and descend into its value. Numeric segments index
- * arrays (e.g. "contentChanges.0.text" for full-sync where
- * we only ever care about the first element anyway).
- *
- * No allocation, no recursion, no tree. Just a cursor
- * walking forward through text it mostly ignores.
- * ================================================================ */
+/* ---- Path-based query ---- */
 
 const char *jv_find(const jv_doc_t *doc, const char *path, uint32_t *out_len)
 {
@@ -128,7 +90,6 @@ const char *jv_find(const jv_doc_t *doc, const char *path, uint32_t *out_len)
         while (*dot && *dot != '.') dot++;
         int seglen = (int)(dot - seg);
 
-        /* numeric segment = array index */
         int is_index = 1;
         for (int i = 0; i < seglen; i++) {
             if (!isdigit((unsigned char)seg[i])) { is_index = 0; break; }
@@ -171,7 +132,6 @@ const char *jv_find(const jv_doc_t *doc, const char *path, uint32_t *out_len)
                     break;
                 }
 
-                /* not our key -- skip it and its value */
                 skip_string(s, &pos, len);
                 skip_ws(s, &pos, len);
                 if (pos < len && s[pos] == ':') pos++;
@@ -198,20 +158,7 @@ int jv_has(const jv_doc_t *doc, const char *path)
     return jv_find(doc, path, &len) != NULL;
 }
 
-/* ================================================================
- * String Decoding
- *
- * JSON strings are the main annoyance here. The LSP client
- * sends entire documents as JSON string values, so every
- * backslash, quote, and newline in the TAL source arrives
- * escaped. We need to undo all of that before feeding the
- * text to the lexer.
- *
- * \uXXXX decodes to UTF-8 for BMP characters. Surrogate
- * pairs are left as-is because TAL source is ASCII and if
- * someone has astral plane characters in their PROC names
- * they deserve whatever happens.
- * ================================================================ */
+/* ---- String decoding ---- */
 
 uint32_t jv_decode_str(const char *src, uint32_t src_len,
                        char *dst, uint32_t dst_sz)
@@ -305,26 +252,21 @@ int64_t jv_get_int(const jv_doc_t *doc, const char *path)
     return neg ? -val : val;
 }
 
-/* ================================================================
- * JSON Writer
- *
- * Fixed-buffer emitter with a comma-tracking depth stack.
- * Every open brace/bracket pushes a level, every close pops.
- * The need_comma flag at each level handles the eternal
- * "do I need a comma before this element" question that has
- * plagued every hand-written JSON emitter since 2001.
- * ================================================================ */
+/* ---- JSON writer ---- */
 
 static void jw_put(jw_buf_t *w, char c)
 {
     if (w->pos < LSP_OUT_MAX - 1)
         w->buf[w->pos++] = c;
+    else
+        w->full = 1;
 }
 
 static void jw_puts(jw_buf_t *w, const char *s)
 {
     while (*s && w->pos < LSP_OUT_MAX - 1)
         w->buf[w->pos++] = *s++;
+    if (*s) w->full = 1;
 }
 
 static void jw_comma(jw_buf_t *w)
@@ -376,8 +318,7 @@ void jw_key(jw_buf_t *w, const char *k)
     jw_puts(w, k);
     jw_put(w, '"');
     jw_put(w, ':');
-    /* the value that follows the key should not get
-     * a leading comma -- it's part of the same pair */
+
     w->need_comma[w->depth] = 0;
 }
 

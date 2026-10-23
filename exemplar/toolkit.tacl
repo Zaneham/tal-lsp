@@ -1,0 +1,48 @@
+?SECTION banner TEXT
+== toolkit: a TACL library. LOAD it and the sections below become
+== variables in your directory, one per ?SECTION.
+TACL toolkit, loaded.
+
+?SECTION greet MACRO
+== greet: say hello to whoever is logged on.
+#OUTPUT Hello [#USERNAME [#PROCESSINFO /PAID/ [#MYPID]]], welcome to [#MYSYSTEM]
+
+?SECTION cf ALIAS
+== cf: the short way to type FILES
+FILES
+
+?SECTION job^rec STRUCT
+  BEGIN
+    CHAR  name (0:7);
+    INT   prio VALUE 150;
+    INT   cpu  VALUE 0;
+    FNAME prog;
+  END;
+
+?SECTION countdown ROUTINE
+== countdown: count from a number down to one, a second a step.
+== Usage: COUNTDOWN 10
+#FRAME
+#PUSH n
+SINK [#ARGUMENT /VALUE n/ NUMBER /MINIMUM 1/ /MAXIMUM 60/]
+SINK [#ARGUMENT END]
+[#LOOP |WHILE| n > 0 |DO|
+  #OUTPUT [n]
+  #DELAY 100
+  #SET n [#COMPUTE n - 1]
+]
+#OUTPUT Liftoff
+#UNFRAME
+
+?SECTION spin ROUTINE
+== spin: run a command once per word in the rest of the line.
+== Usage: SPIN FILEINFO $data.src.*
+#FRAME
+#PUSH cmd arg rslt
+SINK [#ARGUMENT /VALUE cmd/ WORD]
+[#LOOP |DO|
+  #SET rslt [#ARGUMENT /VALUE arg/ WORD END]
+  [#IF rslt = 1 |THEN| [cmd] [arg] ]
+|UNTIL| rslt = 2
+]
+#UNFRAME

@@ -1,0 +1,26 @@
+?INSPECT, SYMBOLS, NOCODE
+?SOURCE $SYSTEM.SYSTEM.EXTDECS0 (MYTERM, FILE_OPEN_, WRITEX, FILE_CLOSE_, PROCESS_STOP_, ABEND)
+! hello.tal
+! Opens the home terminal, writes one line, stops. The smallest
+! useful TAL program, and the one every NonStop course starts with.
+
+LITERAL term^len = 24;
+
+INT    .term^name[0:11];
+STRING .msg[0:23] := "Hello from the NonStop!";
+
+PROC hello MAIN;
+  BEGIN
+    INT term;
+    INT err;
+
+    CALL MYTERM(term^name);
+    err := FILE_OPEN_(term^name:term^len, term);
+    IF err <> 0 THEN CALL ABEND;
+
+    CALL WRITEX(term, msg, $LEN(msg));
+    IF <> THEN CALL ABEND;
+
+    CALL FILE_CLOSE_(term);
+    CALL PROCESS_STOP_;
+  END;

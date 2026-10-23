@@ -1,0 +1,95 @@
+?SOURCE $SYSTEM.SYSTEM.EXTDECS0 (FILE_OPEN_, READUPDATEX, REPLYX, FILE_CLOSE_, PROCESS_STOP_, ABEND)
+! server.tal
+! The server half of a requester/server pair. Opens $RECEIVE, reads
+! each request, dispatches on the request code and replies. The
+! request layout is shared with the requester through the STRUCT.
+
+LITERAL max^msg    = 4096;
+LITERAL rq^ping    = 1;
+LITERAL rq^echo    = 2;
+LITERAL rq^sum     = 3;
+LITERAL rq^stop    = 99;
+LITERAL err^ok     = 0;
+LITERAL err^badreq = 2;
+
+STRUCT request^def(*);
+  BEGIN
+    INT    op;
+    INT    len;
+    INT    flags;
+    STRING data[0:max^msg - 7];
+  END;
+
+STRUCT .request(request^def);
+INT    .reply^buf[0:max^msg / 2 - 1];
+
+INT recv;
+INT read^len;
+INT requests := 0;
+
+DEFINE bump(n) = n := n '+' 1 #;
+DEFINE is^urgent(r) = (r.flags.<15:15> = 1) #;
+
+INT PROC sum^words(buf, n);
+  INT .buf;
+  INT n;
+  BEGIN
+    INT i;
+    INT total := 0;
+    FOR i := 0 TO n - 1 DO
+      total := total '+' buf[i];
+    RETURN total;
+  END;
+
+PROC send^reply(err, len);
+  INT err;
+  INT len;
+  BEGIN
+    CALL REPLYX(reply^buf, len, , , err);
+    IF <> THEN CALL ABEND;
+  END;
+
+PROC server MAIN;
+  BEGIN
+    INT err;
+    INT done := 0;
+
+    err := FILE_OPEN_("$RECEIVE":8, recv, , , , 1);
+    IF err <> err^ok THEN CALL ABEND;
+
+    WHILE NOT done DO
+      BEGIN
+        CALL READUPDATEX(recv, request, max^msg, read^len);
+        IF < THEN CALL ABEND;
+        bump(requests);
+
+        CASE request.op OF
+          BEGIN
+            rq^ping ->
+              CALL send^reply(err^ok, 0);
+            rq^echo ->
+              BEGIN
+                reply^buf ':=' request.data FOR request.len BYTES;
+                CALL send^reply(err^ok, request.len);
+              END;
+            rq^sum ->
+              BEGIN
+                reply^buf[0] := sum^words(@request.data, request.len '>>' 1);
+                CALL send^reply(err^ok, 2);
+              END;
+            rq^stop ->
+              BEGIN
+                done := 1;
+                CALL send^reply(err^ok, 0);
+              END;
+            OTHERWISE ->
+              CALL send^reply(err^badreq, 0);
+          END;
+
+        IF is^urgent(request) THEN
+          reply^buf[1] := requests;
+      END;
+
+    CALL FILE_CLOSE_(recv);
+    CALL PROCESS_STOP_;
+  END;

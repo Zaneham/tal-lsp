@@ -1,0 +1,23 @@
+?TACL ROUTINE
+== dow: the day of the week for a timestamp, or for right now.
+== Straight from section 4 of the TACL Reference Manual, which is
+== where most people meet their first routine.
+#FRAME
+#PUSH days timestamp rslt
+#SET rslt [#ARGUMENT /VALUE timestamp/ NUMBER END]
+[#CASE [rslt]
+  |1| SINK [#ARGUMENT END]
+  |2| #SET timestamp [#TIMESTAMP]
+]
+#SET days [#COMPUTE [timestamp] / (24 * 60 * 60 * 100)]
+#SET days [#COMPUTE days - ((days / 7) * 7)]
+#RESULT [#CASE [days]
+  |0| Tuesday
+  |1| Wednesday
+  |2| Thursday
+  |3| Friday
+  |4| Saturday
+  |5| Sunday
+  |OTHERWISE| Monday
+]
+#UNFRAME

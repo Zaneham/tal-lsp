@@ -1,0 +1,24 @@
+?TACL ROUTINE
+== backup: duplicate every file named on the command line into the
+== BACKUP subvolume on the current volume, purging any old copy.
+== Usage: BACKUP $vol.subvol.file [ file ... ]
+#FRAME
+#PUSH file dest stamp rslt copied
+#SET copied 0
+#SET dest BACKUP
+#SET stamp [#CONTIME [#TIMESTAMP]]
+[#LOOP |DO|
+  #SET rslt [#ARGUMENT /VALUE file/ FILENAME END]
+  [#IF rslt = 1 |THEN|
+    [#IF [#FILEINFO /EXISTENCE/ [file]] |THEN|
+      FUP DUP [file], [dest].*, PURGE
+      #SET copied [#COMPUTE [copied] + 1]
+    |ELSE|
+      #OUTPUT [file] not found, skipped
+    ]
+  ]
+|UNTIL| rslt = 2
+]
+#OUTPUT [copied] file(s) copied to [dest] at [stamp]
+#RESULT [copied]
+#UNFRAME

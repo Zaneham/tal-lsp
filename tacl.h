@@ -100,4 +100,4 @@ void tc_pass(tal_symtab_t *S, tal_lex_t *L, tal_diag_t *diags, int *n_diags);
 tc_ctx_t tc_ctx(const char *src, uint32_t len, uint32_t line, uint32_t col);
 const char *tc_kname(uint8_t kind);
 
-#endif /* TACL_H */
+#endif

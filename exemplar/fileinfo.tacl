@@ -1,0 +1,17 @@
+?TACL MACRO
+== fileinfo: owner, file code, end of file and last change for one
+== Guardian file. A macro, so the argument arrives as %1%.
+== Usage: FILEINFO $vol.subvol.file
+#FRAME
+#PUSH fname
+#SET fname %1%
+[#IF NOT [#FILEINFO /EXISTENCE/ [fname]] |THEN|
+  #OUTPUT [fname] does not exist
+|ELSE|
+  #OUTPUT [fname]
+  #OUTPUT   owner     [#FILEINFO /OWNER/ [fname]]
+  #OUTPUT   code      [#FILEINFO /CODE/ [fname]]
+  #OUTPUT   eof       [#FILEINFO /EOF/ [fname]]
+  #OUTPUT   modified  [#CONTIME [#FILEINFO /MODIFICATION/ [fname]]]
+]
+#UNFRAME

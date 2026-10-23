@@ -1,0 +1,68 @@
+?SOURCE $SYSTEM.SYSTEM.EXTDECS0 (DELAY, ABEND)
+! ringbuf.ptal
+! A fixed-size ring buffer of 16-bit samples, pTAL flavour. The
+! struct is FIELDALIGN, the far pointer is an EXTADDR, and there
+! is no CODE, STACK or STORE anywhere because pTAL took them away.
+
+LITERAL ring^size = 256;
+LITERAL ring^mask = ring^size - 1;
+
+STRUCT ring^def(*) FIELDALIGN(SHARED2);
+  BEGIN
+    INT head;
+    INT tail;
+    INT count;
+    INT slots[0:ring^size - 1];
+  END;
+
+STRUCT .ring(ring^def);
+STRUCT .EXT remote(ring^def);
+
+PROC ring^init(r);
+  STRUCT .r(ring^def);
+  BEGIN
+    r.head := 0;
+    r.tail := 0;
+    r.count := 0;
+  END;
+
+INT PROC ring^put(r, sample);
+  STRUCT .r(ring^def);
+  INT sample;
+  BEGIN
+    IF r.count = ring^size THEN RETURN 0;
+    r.slots[r.tail] := sample;
+    r.tail := (r.tail '+' 1) LAND ring^mask;
+    r.count := r.count '+' 1;
+    RETURN 1;
+  END;
+
+INT PROC ring^get(r, sample);
+  STRUCT .r(ring^def);
+  INT .sample;
+  BEGIN
+    IF r.count = 0 THEN RETURN 0;
+    sample := r.slots[r.head];
+    r.head := (r.head '+' 1) LAND ring^mask;
+    r.count := r.count '-' 1;
+    RETURN 1;
+  END;
+
+PROC ring^main MAIN;
+  BEGIN
+    INT     i;
+    INT     v;
+    EXTADDR where;
+
+    CALL ring^init(ring);
+    FOR i := 0 TO 15 DO
+      IF NOT ring^put(ring, i * i) THEN CALL ABEND;
+
+    where := $XADR(ring.slots);
+    @remote := where;
+
+    WHILE ring^get(ring, v) DO
+      IF v > ring^size THEN CALL ABEND;
+
+    CALL DELAY(100D);
+  END;

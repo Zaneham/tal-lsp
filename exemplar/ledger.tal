@@ -1,0 +1,65 @@
+?SOURCE $SYSTEM.SYSTEM.EXTDECS0 (NUMOUT, WRITEX, MYTERM, FILE_OPEN_, FILE_CLOSE_, ABEND)
+! ledger.tal
+! Posts a handful of fixed-point transactions to an account and
+! prints the balance. FIXED(2) keeps the cents exact, which is
+! the whole reason the type exists.
+
+LITERAL max^txn  = 16;
+LITERAL line^len = 40;
+LITERAL deposit  = 1;
+LITERAL withdraw = 2;
+
+STRUCT txn^def(*);
+  BEGIN
+    INT      kind;
+    FIXED(2) amount;
+    STRING   memo[0:15];
+  END;
+
+STRUCT   .txns(txn^def)[0:max^txn - 1];
+FIXED(2) balance := 0.00F;
+INT      n^txns := 0;
+INT      term;
+STRING   .line[0:line^len - 1];
+INT      .term^name[0:11];
+
+PROC post(kind, amount, memo, memo^len);
+  INT      kind;
+  FIXED(2) amount;
+  STRING   .memo;
+  INT      memo^len;
+  BEGIN
+    IF n^txns >= max^txn THEN RETURN;
+    txns[n^txns].kind := kind;
+    txns[n^txns].amount := amount;
+    txns[n^txns].memo ':=' memo FOR memo^len BYTES;
+    IF kind = deposit THEN balance := balance + amount
+                      ELSE balance := balance - amount;
+    n^txns := n^txns + 1;
+  END;
+
+PROC show^balance;
+  BEGIN
+    STRING .p;
+    line ':=' "Balance: " -> @p;
+    CALL NUMOUT(p, $INT(balance), 10, 10);
+    CALL WRITEX(term, line, line^len);
+    IF <> THEN CALL ABEND;
+  END;
+
+PROC ledger MAIN;
+  BEGIN
+    INT err;
+
+    CALL MYTERM(term^name);
+    err := FILE_OPEN_(term^name:24, term);
+    IF err <> 0 THEN CALL ABEND;
+
+    CALL post(deposit,  1250.00F, "opening deposit", 15);
+    CALL post(withdraw,   19.99F, "coffee beans",    12);
+    CALL post(withdraw,  300.00F, "rent share",      10);
+    CALL post(deposit,    42.42F, "refund",           6);
+    CALL show^balance;
+
+    CALL FILE_CLOSE_(term);
+  END;
